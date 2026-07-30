@@ -15,6 +15,7 @@ Reference this file from SKILL.md and other references instead of duplicating er
 8. [Container image resolution failure in entry workflow](#container-image-resolution-failure-in-entry-workflow)
 9. [SCA: repo not in openlibing](#sca-repo-not-in-openlibing)
 10. [Git merge: committer identity unknown](#git-merge-committer-identity-unknown)
+11. ["bad substitution" when entry workflow calls a sub-workflow](#bad-substitution-when-entry-workflow-calls-a-sub-workflow)
 
 ---
 
@@ -213,3 +214,56 @@ git merge --no-edit pr_${{ inputs.pr_id }}
 
 Include these `git config` lines in the clone/merge step of all build/UT/presmoke sub-workflows,
 immediately after `git checkout -b new_${TARGET_BRANCH}` and before `git merge`.
+
+---
+
+## "bad substitution" when entry workflow calls a sub-workflow
+
+**Error message:**
+`bad substitution` — typically seen at sub-workflow startup, when the sub-workflow tries to
+evaluate an input like `${{ inputs.REMOTE_URL }}` or `${{ inputs.pr_id }}`.
+
+**Cause:** The entry workflow lists the sub-workflow parameter in its `with:` block, even
+though the sub-workflow already declares it with a `default: ${{ atomgit... }}` fallback.
+
+```yaml
+# Sub-workflow .build_job.yml
+on:
+  workflow_call:
+    inputs:
+      REMOTE_URL:
+        required: false
+        default: ${{ atomgit.repositoryurl }}   # <-- already has a context default
+```
+```yaml
+# Entry workflow PR-pipeline_full.yml  (WRONG)
+Build_arm:
+  uses: .gitcode/workflows/.build_job.yml
+  with:
+    IMAGE_FLAG: "mindx_arm:..."
+    REMOTE_URL: ${{ env.REMOTE_URL }}     # ❌ re-passing makes the atomgit expression
+                                           #    evaluate in the entry's context, producing
+                                           #    an unresolvable substitution string
+```
+
+**Fix:** In the entry workflow's `with:` block, pass ONLY parameters that are
+`required: true` in the sub-workflow (typically `IMAGE_FLAG`, `runs_on_arch`). Let any
+parameter declared with `default: ${{ atomgit... }}` resolve from the sub-workflow's own
+default — the atomgit context is equally available in the sub-workflow and will bind
+correctly there.
+
+```yaml
+# RIGHT
+Build_arm:
+  uses: .gitcode/workflows/.build_job.yml
+  secrets:
+    OBS_AK: ${{ secrets.OBS_AK }}
+    OBS_SK: ${{ secrets.OBS_SK }}
+  with:
+    IMAGE_FLAG: "mindx_arm:SDK_20260112_1"   # ✅ caller-provided, required
+    runs_on_arch: "arm64"                    # ✅ caller-provided, required
+    # REMOTE_URL / pr_id / TARGET_BRANCH → let the sub-workflow use its own defaults
+```
+
+See `references/conversion-rules.md` section "Sub-workflow inputs: do NOT re-pass parameters
+that already have atomgit defaults" for the full decision table.

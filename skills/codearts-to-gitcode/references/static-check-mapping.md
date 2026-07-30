@@ -13,7 +13,7 @@ CodeArts pipelines to GitCode equivalents.
 | Check | Plugin | Key Inputs |
 |---|---|---|
 | SCA | `sca-pr-scan` | scan-access-key, scan-secret-key, pr-id, repository-name |
-| pre-commit | `openlibing-pre-commit-action` | gc_token |
+| pre-commit | `openlibing-pre-commit-action` | (none — `gc_token` no longer required as of 2026-07) |
 | CodeCheck (CodeArts) | `codecheck_gitcode_v2` | project_id, task_name, branch |
 
 **No plugin available (use container+script):** Antipoison, SAST (AI-Check)
@@ -63,6 +63,11 @@ https://www.openlibing.com/helpCenter?id=136`, the fix is:
 
 **GitCode conversion**: Use `openlibing-pre-commit-action` plugin.
 
+**NOTE (verified 2026-07)**: The `openlibing-pre-commit-action` plugin no longer requires
+the `gc_token` parameter. Do NOT pass it — passing it can cause plugin errors on newer
+plugin versions. The plugin authenticates automatically via the workflow's built-in
+context. Simply call it with no `with:` block, or an empty one.
+
 ```yaml
 pre_commit:
   name: pre_commit
@@ -85,8 +90,6 @@ pre_commit:
         python --version
     - name: run pre-commit
       uses: openlibing-pre-commit-action
-      with:
-        gc_token: ${{ secrets.ACCESS_QK }}
 ```
 
 Adjust Python version symlink based on the container image's available Python.

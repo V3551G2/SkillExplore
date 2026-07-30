@@ -139,6 +139,14 @@ stages:
       #         # See static-check-mapping.md for full pattern
 
       # --- Build Jobs ---
+      #
+      # IMPORTANT: When calling a sub-workflow via `uses:`, ONLY pass parameters that the
+      # sub-workflow declares as `required: true` (caller-provided, e.g. IMAGE_FLAG, runs_on_arch).
+      # Do NOT pass parameters that the sub-workflow already defaults via atomgit context
+      # (REMOTE_URL, pr_id, TARGET_BRANCH, DEFAULT_BRANCH) — re-passing them causes
+      # "bad substitution" errors because the atomgit expression is evaluated in the entry
+      # workflow's context and forwarded literally to the sub-workflow. See conversion-rules.md
+      # "Sub-workflow inputs: do NOT re-pass parameters that already have atomgit defaults".
 
       # Build_x86:
       #   name: Build_x86
@@ -150,6 +158,7 @@ stages:
       #   with:
       #     IMAGE_FLAG: "<image_tag_for_x86>"
       #     runs_on_arch: "x64"
+      #     # NOTE: do NOT add REMOTE_URL / pr_id / TARGET_BRANCH here — they default via atomgit
 
       # Build_arm:
       #   name: Build_arm
@@ -171,6 +180,7 @@ stages:
       #   with:
       #     IMAGE_FLAG: "<image_tag>"
       #     runs_on_arch: "x64"
+      #     # NOTE: no REMOTE_URL / pr_id / TARGET_BRANCH here either
 
       # --- PreSmoke Jobs ---
 

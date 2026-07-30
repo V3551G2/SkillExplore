@@ -18,7 +18,7 @@ in GitCode repo Settings > Secrets and variables.
 | (OBS credentials) | `OBS_SK` | OBS secret key |
 | `SCAN_ACCESS_KEY` | `SCAN_ACCESS_KEY` | SCA scan access key |
 | `SCAN_SECRET_KEY` | `SCAN_SECRET_KEY` | SCA scan secret key |
-| (GitCode access token) | `ACCESS_QK` | GitCode personal access token |
+| (GitCode access token) | `ACCESS_QK` | GitCode personal access token (used by SAST/AI-Check; NOT needed for `openlibing-pre-commit-action` as of 2026-07 — `gc_token` input was removed from the plugin) |
 | `access` / `access_token` | `ACCESS_TOKEN` | General API access token |
 
 ## Naming Convention

@@ -201,8 +201,9 @@ on:
 
 3. **Static checks → plugins or container+script.** Consult `references/static-check-mapping.md` for
    the specific plugin to use per check type. SCA uses `sca-pr-scan` plugin; pre-commit uses
-   `openlibing-pre-commit-action`; Antipoison has no plugin and must run as container + python script;
-   CodeCheck uses `codecheck_gitcode_v2`; SAST runs as container+script.
+   `openlibing-pre-commit-action` (do NOT pass `gc_token` — it is no longer required as of 2026-07);
+   Antipoison has no plugin and must run as container + python script; CodeCheck uses `codecheck_gitcode_v2`;
+   SAST runs as container+script.
 
 4. **Build & UT jobs → reusable sub-workflows.** These have long call chains (clone repo, fetch PR refs,
    merge, set up build tools, run build scripts, upload artifacts). Encapsulate them in workflow_call files.
@@ -251,6 +252,13 @@ on:
      - Repo URL: `${{ atomgit.repositoryurl }}`
      - Full repo (`owner/name`): `${{ atomgit.repository }}`
    - Sensitive parameters from CodeArts `parameters[]` → map to `${{ secrets.XXX }}` (user configures these in GitCode repo settings)
+   - **Sub-workflow `with:` block (entry workflow calling sub-workflows):** Only pass inputs that are
+     `required: true` in the sub-workflow (typically `IMAGE_FLAG`, `runs_on_arch`). Do NOT re-pass inputs
+     the sub-workflow already defaults via `default: ${{ atomgit... }}` (e.g. `REMOTE_URL`, `pr_id`,
+     `TARGET_BRANCH`, `DEFAULT_BRANCH`) — doing so triggers a **"bad substitution"** runtime error
+     because the atomgit expression gets evaluated in the entry workflow's context before being
+     forwarded. The sub-workflow resolves its own atomgit defaults correctly. See
+     `references/conversion-rules.md` and FAQ entry #11 for details and the WRONG/RIGHT example.
 
 7. **Images:** Use `CP_docker_image` parameter value (the REAL container image), NOT the SWR step's
    `properties.image` which is often the CodeArts karmada wrapper. Extract image tag for `IMAGE_FLAG`.

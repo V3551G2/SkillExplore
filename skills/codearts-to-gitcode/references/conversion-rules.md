@@ -178,6 +178,62 @@ env:
 are called via `uses:` which passes inputs explicitly. Entry workflow env vars are passed
 to sub-workflows via `with:` in the `uses:` call.
 
+### Sub-workflow inputs: do NOT re-pass parameters that already have atomgit defaults (CRITICAL!)
+
+When a sub-workflow (`.build_job.yml`, `.ut_cpp.yml`, etc.) declares an input with a default
+value that references the `atomgit` context, the **entry workflow must NOT include that
+parameter in its `with:` block**. Doing so causes GitCode to evaluate the `${{ atomgit... }}`
+expression *in the entry workflow's context* (where it may be malformed, unresolvable, or
+the wrong shape) and then substitute it into the sub-workflow call, producing a
+**"bad substitution"** runtime error.
+
+The pattern is: sub-workflow inputs fall into two categories:
+
+| Category | Declared in sub-workflow with… | Passed from entry via `with:`? | Examples |
+|---|---|---|---|
+| **Caller-provided** (vary per invocation) | `required: true`, or no sensible default | **YES** — must pass explicitly | `IMAGE_FLAG`, `runs_on_arch` |
+| **Context-derived** (same atomgit default every call) | `required: false` + `default: ${{ atomgit... }}` | **NO** — let the default apply | `REMOTE_URL`, `pr_id`/`PR_ID`, `TARGET_BRANCH` |
+
+```yaml
+# ── Sub-workflow .build_job.yml ──
+on:
+  workflow_call:
+    inputs:
+      REMOTE_URL:
+        required: false
+        type: string
+        default: ${{ atomgit.repositoryurl }}      # context default → let it apply
+      pr_id:
+        required: false
+        type: string
+        default: ${{ atomgit.event.pull_request.number }}
+      IMAGE_FLAG:
+        required: true                              # caller must pass
+        type: string
+      runs_on_arch:
+        required: true
+        type: string
+
+# ── Entry workflow PR-pipeline_full.yml ──
+jobs:
+  Build_arm:
+    uses: .gitcode/workflows/.build_job.yml
+    secrets:
+      OBS_AK: ${{ secrets.OBS_AK }}
+    with:
+      IMAGE_FLAG: "mindx_arm:SDK_20260112_1"        # ✅ caller-provided
+      runs_on_arch: "arm64"                         # ✅ caller-provided
+      # ❌ DO NOT pass REMOTE_URL / pr_id / TARGET_BRANCH here — they already
+      #    have atomgit defaults in the sub-workflow, and re-passing them
+      #    triggers "bad substitution" errors at runtime.
+```
+
+The only case where you DO pass a context-derived parameter from the entry workflow is when
+you need to override the default (e.g., passing `env.TARGET_BRANCH` because the entry workflow
+wraps it in an env var rather than relying on the atomgit context directly). In that scenario,
+the entry's value comes from its own `env:` block (a literal, already-evaluated string), not
+from a nested `${{ atomgit... }}` expression, so it is safe to pass through.
+
 ### Entry Workflow: Container images must be literal strings, NOT `${{ env.xxx }}`
 
 In the **entry workflow** (`PR-pipeline_full.yml`), when a job has a `container:` section with
