@@ -1,0 +1,186 @@
+# Template: PR-pipeline_full.yml (entry workflow)
+# Replace <placeholders> with values extracted from the CodeArts pipeline
+name: PR-pipeline_full
+
+on:
+  pull_request_target:
+    branches:
+      # List target branches from the CodeArts pipeline's trigger config
+      # Common: master, main, release branches
+      - master
+    types:
+      - open
+      - update
+      - reopen
+      - merge
+    branches-ignore: []
+    paths-ignore: []
+    code-update: false
+  pull_request_comment:
+    types: [created]
+    branches: [ '*' ]
+    comments: [ '^(?:\/)?compile*' ]
+  workflow_dispatch:
+    inputs:
+      print_tags:
+        description: 'True to print to STDOUT'
+        required: true
+        type: boolean
+      tags:
+        description: 'Test scenario tags'
+        required: true
+        type: boolean
+
+# IMPORTANT: Use env: NOT inputs: for atomgit context variables in entry workflow!
+# inputs with atomgit defaults fail on PR triggers with "Input required and not supplied"
+env:
+  BUILD_SKIP: "no"
+  # System context (atomgit.event.*) - use env so they work on PR triggers
+  REPO_NAME: ${{ atomgit.event.repository.name }}
+  REPO_OWNER: "<owner>"
+  REMOTE_URL: ${{ atomgit.repositoryurl }}
+  PR_ID: ${{ atomgit.event.pull_request.number }}
+  TARGET_BRANCH: ${{ atomgit.event.pull_request.base.ref }}
+  # Define SWR image references here (extracted from CodeArts job configs)
+  # img_clone_x86: "swr.<region>.myhuaweicloud.com/<org>/<image>:<tag>"
+  # img_sca_x86: "swr.<region>.myhuaweicloud.com/<org>/<image>:<tag>"
+  # img_build_x86: "swr.<region>.myhuaweicloud.com/<org>/<image>:<tag>"
+  # img_build_arm: "swr.<region>.myhuaweicloud.com/<org>/<image>:<tag>"
+  # img_ut_python_x86: "swr.<region>.myhuaweicloud.com/<org>/<image>:<tag>"
+
+stages:
+  # Stage naming convention: name is a &-joined list of task categories in the stage.
+  # Categories: CodeCheck (static checks), Build (compilation), Test (UT/smoke).
+  # Examples: CodeCheck, CodeCheck&Build&Test, Build&Test, Build
+  stage_0:
+    name: CodeCheck
+    select: selected_by_default
+    jobs:
+      Only_doc_commit_check:
+        name: Only_doc_commit_check
+        runs-on: [ dedicate-hosted, x64, large ]
+        container:
+          image: swr.<region>.myhuaweicloud.com/<org>/<check_image>
+          options: --user root
+        outputs:
+          build_skip: ${{ steps.set-skip.outputs.build_skip }}
+        steps:
+          - name: checkout
+            uses: checkout
+            with:
+              ref: ${{ atomgit.event.pull_request.merge_commit_sha || '' }}
+          - name: only doc commit check
+            id: only-doc-check
+            uses: <owner>/<repo>/.gitcode/actions/only_doc_commit_check@<branch>
+            with:
+              pr_id: ${{ inputs.pr_id }}
+              target_branch: ${{ atomgit.event.pull_request.base.ref }}
+              remote_url: ${{ env.ATOMGIT_REPOSITORY_URL }}
+          - name: set build skip flag
+            id: set-skip
+            run: |
+              BUILD_SKIP=${{ steps.only-doc-check.outputs.is_only_doc }}
+              echo "build_skip=${BUILD_SKIP}" >> "$ATOMGIT_OUTPUT"
+              echo "Only Doc Commit Check result: ${BUILD_SKIP}"
+
+  # Static checks, builds, and tests go in stage_1
+  # Name is &-joined based on what categories are present.
+  # If this stage contains CodeCheck + Build + Test → name: CodeCheck&Build&Test
+  # If only Build + Test → name: Build&Test
+  stage_1:
+    name: CodeCheck&Build&Test
+    select: selected_by_default
+    jobs:
+      # --- Static Checks ---
+
+      # SCA:
+      #   name: SCA
+      #   runs-on: [ 'codearts-hosted', 'ubuntu-latest', 'x64', 'large' ]
+      #   steps:
+      #     - uses: checkout
+      #       with:
+      #         ref: ${{ atomgit.event.pull_request.merge_commit_sha || '' }}
+      #     - uses: sca-pr-scan
+      #       with:
+      #         scan-access-key: ${{ secrets.SCAN_ACCESS_KEY }}
+      #         scan-secret-key: ${{ secrets.SCAN_SECRET_KEY }}
+      #         pr-id: ${{ atomgit.event.pull_request.number }}
+      #         repository-name: ${{ atomgit.repository }}
+
+      # pre_commit:
+      #   name: pre_commit
+      #   runs-on: [ 'codearts-hosted', 'ubuntu-latest', 'x64', 'large' ]
+      #   container:
+      #     image: <python_image>
+      #     options: --user root
+      #   steps:
+      #     - uses: checkout
+      #       with:
+      #         ref: ${{ atomgit.event.pull_request.merge_commit_sha || '' }}
+      #     - name: setup python
+      #       run: |
+      #         ln -sf /usr/local/bin/python3.<ver> /usr/bin/python
+      #     - uses: openlibing-pre-commit-action
+      #       with:
+      #         gc_token: ${{ secrets.ACCESS_QK }}
+
+      # Antipoison:
+      #   name: Antipoison
+      #   runs-on: [ 'codearts-hosted', 'ubuntu-latest', 'x64', 'large' ]
+      #   container:
+      #     image: <antipoison_image>
+      #     options: --user root
+      #   steps:
+      #     - uses: checkout
+      #       with:
+      #         ref: ${{ atomgit.event.pull_request.merge_commit_sha || '' }}
+      #     - name: Antipoison
+      #       run: |
+      #         # See static-check-mapping.md for full pattern
+
+      # --- Build Jobs ---
+
+      # Build_x86:
+      #   name: Build_x86
+      #   if: ${{ jobs.Only_doc_commit_check.outputs.build_skip == 'no' }}
+      #   uses: .gitcode/workflows/.build_job.yml
+      #   secrets:
+      #     OBS_AK: ${{ secrets.OBS_AK }}
+      #     OBS_SK: ${{ secrets.OBS_SK }}
+      #   with:
+      #     IMAGE_FLAG: "<image_tag_for_x86>"
+      #     runs_on_arch: "x64"
+
+      # Build_arm:
+      #   name: Build_arm
+      #   if: ${{ jobs.Only_doc_commit_check.outputs.build_skip == 'no' }}
+      #   uses: .gitcode/workflows/.build_job.yml
+      #   secrets:
+      #     OBS_AK: ${{ secrets.OBS_AK }}
+      #     OBS_SK: ${{ secrets.OBS_SK }}
+      #   with:
+      #     IMAGE_FLAG: "<image_tag_for_arm>"
+      #     runs_on_arch: "arm64"
+
+      # --- UT Jobs ---
+
+      # UT_python:
+      #   name: UT_python
+      #   if: ${{ jobs.Only_doc_commit_check.outputs.build_skip == 'no' }}
+      #   uses: .gitcode/workflows/.ut_python.yml
+      #   with:
+      #     IMAGE_FLAG: "<image_tag>"
+      #     runs_on_arch: "x64"
+
+      # --- PreSmoke Jobs ---
+
+      # PreSmoke:
+      #   name: PreSmoke
+      #   if: ${{ jobs.Only_doc_commit_check.outputs.build_skip == 'no' }}
+      #   uses: .gitcode/workflows/.presmoke.yml
+      #   secrets:
+      #     OBS_AK: ${{ secrets.OBS_AK }}
+      #     OBS_SK: ${{ secrets.OBS_SK }}
+      #   with:
+      #     IMAGE_FLAG: "<image_tag>"
+      #     runs_on_arch: "arm64"

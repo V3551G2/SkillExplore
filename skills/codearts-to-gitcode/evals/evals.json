@@ -1,0 +1,15 @@
+{
+  "skill_name": "codearts-to-gitcode",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "请将这个CodeArts PR流水线转化为GitCode Action YAML文件。\n\n流水线URL: https://devcloud.cn-north-4.huaweicloud.com/cicd/project/609138a9ed7049aa975c6b857c7234fc/pipeline/history/a2b7cd2199c14d0c97389ece5a6258d1?v=1\nCookie: _frid=ed40b1aedb054a2aabc3f15db60946b4; devclouddevuibjtcftk=IHAP-VU01-7TK8-ITD2-YD6B-F4QB-HSSL-7R8J; hwstaff_mindx_sys_mindx_yangyifei_cfProjectName=cn-north-4\n\n输出为YAML文件，包含PR-pipeline_full.yml入口文件和各子workflow文件。",
+      "expected_output": "Should produce a PR-pipeline_full.yml entry file with pull_request_target trigger, md_check job, static check jobs (SCA, pre-commit, Antipoison, SAST), build/UT/smoke sub-workflow calls, correct runner mappings (x64/arm64), secret references, and atomgit context variables."
+    },
+    {
+      "id": 2,
+      "prompt": "我有一个华为云CodeArts流水线需要转成GitCode Actions YAML。流水线链接是 https://devcloud.cn-north-4.huaweicloud.com/cicd/project/00000000000000000000000000000000/pipeline/history/11111111111111111111111111111111?v=1 ，cookie包含cftk=ABCDEF。请帮我转化。",
+      "expected_output": "Should recognize it cannot connect with invalid project/pipeline IDs and ask for valid credentials, OR gracefully handle the error and explain what went wrong."
+    }
+  ]
+}

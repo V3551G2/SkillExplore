@@ -1,0 +1,123 @@
+# Template: .build_job.yml (reusable build sub-workflow)
+# This is a workflow_call reusable workflow for compiling code.
+# Adapt the "compile" step's run commands from the CodeArts job's SWR container command.
+name: Build Job
+
+on:
+  workflow_call:
+    inputs:
+      REMOTE_URL:
+        required: false
+        type: string
+        default: ${{ atomgit.repositoryurl }}
+      pr_id:
+        required: false
+        type: string
+        default: ${{ atomgit.event.pull_request.number }}
+      IMAGE_FLAG:
+        required: true
+        type: string
+        description: "SWR image tag suffix, e.g. mindx_x86:tag"
+      TARGET_BRANCH:
+        required: false
+        type: string
+        default: ${{ atomgit.event.pull_request.base.ref }}
+      runs_on_arch:
+        required: true
+        type: string
+        description: "x64 or arm64"
+      DEFAULT_BRANCH:
+        required: false
+        type: string
+        default: "master"
+        description: "Default branch for build script fallback"
+    secrets:
+      OBS_AK:
+        required: true
+      OBS_SK:
+        required: true
+
+jobs:
+  JOB_compile:
+    name: JOB_compile
+    select: selected_by_default
+    runs-on: [ dedicate-hosted, "${{ inputs.runs_on_arch }}", large ]
+    container:
+      image: swr.<region>.myhuaweicloud.com/<org>/${{ inputs.IMAGE_FLAG }}
+      options: --user root
+    steps:
+      - name: print env
+        run: |
+          echo "pr_id=${{ inputs.pr_id }}"
+          echo "IMAGE_FLAG=swr.<region>.myhuaweicloud.com/<org>/${{ inputs.IMAGE_FLAG }}"
+          echo "REMOTE_URL=${{ inputs.REMOTE_URL }}"
+          echo "TARGET_BRANCH=${{ inputs.TARGET_BRANCH }}"
+          echo "ATOMGIT_WORKSPACE=${ATOMGIT_WORKSPACE}"
+          pwd
+
+      - name: clone repo
+        run: |
+          set -x
+          rm -rf ./* .git
+          servicename_1=$(echo "${{ atomgit.repository }}" | cut -d '/' -f 2)
+          git clone --no-tags --single-branch -b ${{ inputs.TARGET_BRANCH }} ${{ inputs.REMOTE_URL }} ${servicename_1}
+          cd ${servicename_1}
+
+          git fetch origin ${{ inputs.TARGET_BRANCH }}
+          git fetch --no-tags origin refs/merge-requests/${{ inputs.pr_id }}/head:pr_${{ inputs.pr_id }}
+          git reset --hard "origin/${{ inputs.TARGET_BRANCH }}"
+          git checkout -b new_${{ inputs.TARGET_BRANCH }}
+          git config --global user.name AtlasAccount
+          git config --global user.email AtlasAccount@noreply.gitcode.com
+          git merge --no-edit pr_${{ inputs.pr_id }}
+          git diff-tree -r --name-only --no-commit-id origin/${{ inputs.TARGET_BRANCH }} HEAD > ${ATOMGIT_WORKSPACE}/change.txt
+          cat ${ATOMGIT_WORKSPACE}/change.txt
+
+          # Handle non-default-branch PRs: copy CI scripts from default branch
+          if [ "${{ inputs.TARGET_BRANCH }}" != "${{ inputs.DEFAULT_BRANCH }}" ]; then
+              workflow_path=${ATOMGIT_WORKSPACE}/${servicename_1}/.gitcode/workflows
+              mkdir -p ${workflow_path}
+              git clone --no-tags --single-branch --depth 1 -b ${{ inputs.DEFAULT_BRANCH }} ${{ inputs.REMOTE_URL }} ${ATOMGIT_WORKSPACE}/tempdir
+              cp -fr ${ATOMGIT_WORKSPACE}/tempdir/.gitcode/workflows/scripts ${workflow_path}/ 2>/dev/null || true
+              cp -fr ${ATOMGIT_WORKSPACE}/tempdir/.gitcode/workflows/config ${workflow_path}/ 2>/dev/null || true
+              rm -fr ${ATOMGIT_WORKSPACE}/tempdir
+          fi
+
+      - name: compile
+        run: |
+          set -ex
+          servicename_1=$(echo "${{ atomgit.repository }}" | cut -d '/' -f 2)
+          #
+          # === ADAPT THIS SECTION FROM CODEARTS JOB COMMAND ===
+          #
+          # The original CodeArts build command goes here. Key substitutions:
+          #   ${WORKSPACE}  → ${ATOMGIT_WORKSPACE}
+          #   ${pr_id}      → ${{ inputs.pr_id }}
+          #   ${TARGET_BRANCH} / ${servicebranch_1} → ${{ inputs.TARGET_BRANCH }}
+          #   ${servicename_1} → compute from atomgit.repository (already in variable)
+          #   Sensitive params → ${{ secrets.PARAM_NAME }}
+          #
+          # If the original job used /workspace/workflowtool/entrypoint.sh, that's
+          # a CodeArts-specific wrapper. In GitCode, execute the build logic directly.
+          #
+          # Typical structure:
+          #   1. Set up environment (PATH, GOROOT, PYTHON_HOME, etc.)
+          #   2. cd to build directory
+          #   3. Run build scripts (Category A: in the dev repo; Category B: under .gitcode/workflows/scripts/)
+          #   4. Collect artifacts
+          #
+          cd ${ATOMGIT_WORKSPACE}
+          # ... build logic here ...
+
+          mkdir -p ${ATOMGIT_WORKSPACE}/artifacts
+          # Copy build outputs to artifacts/
+
+      - name: Upload to OBS
+        uses: obs-upload
+        with:
+          endpoint: "obs.<region>.myhuaweicloud.com"
+          bucket: "<bucket-name>"
+          access-key: "${{ secrets.OBS_AK }}"
+          secret-key: "${{ secrets.OBS_SK }}"
+          artifact-path: "artifacts/artifacts*.zip"
+          object-prefix: "<prefix>/pr/${{ inputs.pr_id }}/"

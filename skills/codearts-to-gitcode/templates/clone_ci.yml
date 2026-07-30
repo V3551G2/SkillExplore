@@ -1,0 +1,91 @@
+# Template: .clone_ci.yml (DEPRECATED — retained for reference only)
+#
+# NOTE: The "Clone CI repo + upload to OBS" pattern (Case 2) is now ELIMINATED.
+# CI scripts are migrated directly into .gitcode/workflows/scripts/ in the target
+# repo. Do NOT generate this sub-workflow. This file is kept only as historical
+# reference for how the old pattern worked.
+name: Clone CI Repository
+
+on:
+  workflow_call:
+    inputs:
+      IMAGE_FLAG:
+        required: false
+        type: string
+        default: "mindx_x86:only_obsutil"
+      CI_REPO_URL:
+        required: true
+        type: string
+        description: "CI repository URL"
+      CI_BRANCH:
+        required: false
+        type: string
+        default: "master"
+      TARGET_BRANCH:
+        required: false
+        type: string
+        default: ${{ atomgit.event.pull_request.base.ref }}
+      runs_on_arch:
+        required: false
+        type: string
+        default: "x64"
+      repo:
+        required: false
+        type: string
+        default: ${{ atomgit.event.repository.name }}
+      pr_id:
+        required: false
+        type: string
+        default: ${{ atomgit.event.pull_request.number }}
+    secrets:
+      OBS_AK:
+        required: true
+      OBS_SK:
+        required: true
+      ATLAS_PASSWORD:
+        required: true
+
+jobs:
+  JOB_clone:
+    name: JOB_clone_ci
+    select: selected_by_default
+    runs-on: [ dedicate-hosted, "${{ inputs.runs_on_arch }}", large ]
+    container:
+      image: swr.<region>.myhuaweicloud.com/<org>/${{ inputs.IMAGE_FLAG }}
+      options: --user root
+    steps:
+      - name: setup git credential manager
+        run: |
+          set -x
+          apt update && apt install -y git libicu60 curl
+          wget -q https://<obs-bucket>.obs.<region>.myhuaweicloud.com/Private_repository/gcm-linux-x64-2.8.0.deb --no-check-certificate
+          apt install -y ./gcm-linux-x64-*.deb
+          ln -s /usr/local/bin/git-credential-manager /usr/local/bin/gcm
+          export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true
+          export GCM_CREDENTIAL_STORE=cache
+          export GCM_INTERACTIVE=never
+          git config --global --replace-all credential.helper manager
+          printf "protocol=https\nhost=gitcode.com\nusername=AtlasAccount\npassword=%s\n" "${{ secrets.ATLAS_PASSWORD }}" | git-credential-manager store
+
+      - name: clone and package CI repo
+        run: |
+          set -x
+          cd ${ATOMGIT_WORKSPACE}
+          branch_exist=$(git ls-remote --heads "${{ inputs.CI_REPO_URL }}" "${{ inputs.TARGET_BRANCH }}" | wc -l)
+          if [ "${branch_exist}" -eq 1 ]; then
+              CI_BRANCH="${{ inputs.TARGET_BRANCH }}"
+          else
+              CI_BRANCH="${{ inputs.CI_BRANCH }}"
+          fi
+          git clone -b ${CI_BRANCH} ${{ inputs.CI_REPO_URL }} ${{ inputs.repo }}_ci
+          tar -zcvf ${{ inputs.TARGET_BRANCH }}_ci.tar.gz ${{ inputs.repo }}_ci
+
+      - name: Upload CI artifacts to OBS
+        uses: obs-upload
+        with:
+          endpoint: "obs.<region>.myhuaweicloud.com"
+          bucket: "<bucket-name>"
+          access-key: "${{ secrets.OBS_AK }}"
+          secret-key: "${{ secrets.OBS_SK }}"
+          artifact-path: "*_ci.tar.gz"
+          object-prefix: "Private_Repository/${{ inputs.repo }}/${{ inputs.pr_id }}/"

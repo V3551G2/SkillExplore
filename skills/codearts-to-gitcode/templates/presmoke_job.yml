@@ -1,0 +1,66 @@
+# Template: .presmoke.yml (reusable smoke test sub-workflow)
+# Adapt from the CodeArts PreSmoke job configuration.
+name: PreSmoke Job
+
+on:
+  workflow_call:
+    inputs:
+      REMOTE_URL:
+        required: false
+        type: string
+        default: ${{ atomgit.repositoryurl }}
+      pr_id:
+        required: false
+        type: string
+        default: ${{ atomgit.event.pull_request.number }}
+      IMAGE_FLAG:
+        required: true
+        type: string
+        description: "SWR image tag suffix"
+      TARGET_BRANCH:
+        required: false
+        type: string
+        default: ${{ atomgit.event.pull_request.base.ref }}
+      runs_on_arch:
+        required: false
+        type: string
+        default: "arm64"
+      DEFAULT_BRANCH:
+        required: false
+        type: string
+        default: "master"
+    secrets:
+      OBS_AK:
+        required: true
+      OBS_SK:
+        required: true
+
+jobs:
+  JOB_smoke:
+    name: JOB_smoke
+    select: selected_by_default
+    runs-on: [ dedicate-hosted, "${{ inputs.runs_on_arch }}", large ]
+    container:
+      image: swr.<region>.myhuaweicloud.com/<org>/${{ inputs.IMAGE_FLAG }}
+      options: --user root
+    steps:
+      - name: Smoke test
+        run: |
+          set -x
+          cd ${ATOMGIT_WORKSPACE}
+
+          servicename_1=$(echo "${{ atomgit.repository }}" | cut -d '/' -f 2)
+          git clone -b ${{ inputs.TARGET_BRANCH }} --depth=1 ${{ inputs.REMOTE_URL }} ${servicename_1}
+          git fetch origin refs/merge-requests/${{ inputs.pr_id }}/head
+          git checkout FETCH_HEAD -b new_${{ inputs.TARGET_BRANCH }}
+
+          # Download build artifacts from OBS
+          current_date=$(date +%Y%m%d)
+          base_url="https://<obs-bucket>.obs.<region>.myhuaweicloud.com/<prefix>/pr/${{ inputs.pr_id }}"
+          wget -c "${base_url}/artifacts_x86_64.zip"
+          wget -c "${base_url}/artifacts_aarch64.zip"
+          unzip -o "artifacts_x86_64.zip"
+          unzip -o "artifacts_aarch64.zip"
+
+          # === ADAPT: Run smoke tests ===
+          # cd to test directory and run test scripts
