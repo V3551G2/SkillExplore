@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CodeArts → GitCode 流水线迁移案例 — MultimodalSDK PR Pipeline</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2333;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --warn: #d29922;
+    --err: #f85149;
+    --purple: #bc8cff;
+    --cyan: #39c5cf;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 2rem;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: .5rem;
+    margin-bottom: 1rem;
+    color: var(--accent);
+  }
+  h2 {
+    font-size: 1.5rem;
+    color: var(--accent2);
+    margin: 2rem 0 1rem;
+    border-left: 4px solid var(--accent2);
+    padding-left: .75rem;
+  }
+  h3 {
+    font-size: 1.2rem;
+    color: var(--purple);
+    margin: 1.5rem 0 .75rem;
+  }
+  h4 { color: var(--cyan); margin: 1rem 0 .5rem; }
+  p, li { margin-bottom: .5rem; }
+  ul, ol { padding-left: 1.5rem; }
+  code {
+    background: var(--surface2);
+    padding: .15em .4em;
+    border-radius: 4px;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    font-size: .9em;
+    color: var(--accent);
+  }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 1rem 0;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    font-size: .85rem;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; color: var(--text); }
+  .meta {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 2rem;
+  }
+  .meta dt { font-weight: bold; color: var(--text-dim); float: left; width: 130px; }
+  .meta dd { margin-left: 140px; margin-bottom: .3rem; }
+  .chat-box {
+    border-left: 3px solid var(--border);
+    padding: .75rem 1rem;
+    margin: 1rem 0;
+    border-radius: 0 8px 8px 0;
+  }
+  .chat-user {
+    background: #1a2332;
+    border-left-color: var(--accent);
+  }
+  .chat-user .role { color: var(--accent); font-weight: bold; font-size: .85rem; text-transform: uppercase; }
+  .chat-assistant {
+    background: #1a1e2e;
+    border-left-color: var(--accent2);
+  }
+  .chat-assistant .role { color: var(--accent2); font-weight: bold; font-size: .85rem; text-transform: uppercase; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: .9rem;
+  }
+  th, td {
+    text-align: left;
+    padding: .6rem .8rem;
+    border: 1px solid var(--border);
+  }
+  th { background: var(--surface2); color: var(--accent); }
+  tr:nth-child(even) { background: var(--surface); }
+  .badge {
+    display: inline-block;
+    padding: .15em .55em;
+    border-radius: 12px;
+    font-size: .78em;
+    font-weight: bold;
+  }
+  .badge-ok { background: #1a3a2a; color: var(--accent2); }
+  .badge-skip { background: #3a3520; color: var(--warn); }
+  .badge-del { background: #3a1f22; color: var(--err); }
+  .badge-info { background: #1a2a3a; color: var(--accent); }
+  .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px; height: 28px;
+    background: var(--accent);
+    color: var(--bg);
+    border-radius: 50%;
+    font-weight: bold;
+    font-size: .85rem;
+    margin-right: .5rem;
+  }
+  .callout {
+    border-left: 4px solid var(--warn);
+    background: #2a2315;
+    padding: .75rem 1rem;
+    border-radius: 0 8px 8px 0;
+    margin: 1rem 0;
+  }
+  .callout.key { border-color: var(--accent2); background: #1a2e20; }
+  .callout.err { border-color: var(--err); background: #2e1a1f; }
+  .file-tree {
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: .85rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    line-height: 1.6;
+  }
+  .file-tree .dir { color: var(--accent); }
+  .file-tree .file { color: var(--text); }
+  .file-tree .comment { color: var(--text-dim); font-style: italic; }
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 2rem; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ul { list-style: none; padding-left: 0; }
+  .toc ul ul { padding-left: 1.5rem; }
+  .phase-tag {
+    display: inline-block;
+    padding: .1em .5em;
+    border-radius: 4px;
+    font-size: .8rem;
+    font-weight: bold;
+    margin-right: .3rem;
+  }
+  .phase-fetch { background: #1a3a5c; color: var(--cyan); }
+  .phase-transform { background: #2a1a5c; color: var(--purple); }
+  .phase-push { background: #1a5c2a; color: var(--accent2); }
+  .phase-verify { background: #5c4a1a; color: var(--warn); }
+  .phase-fix { background: #5c1a2a; color: var(--err); }
+  .diff-add { color: var(--accent2); background: #1a3a2a; display: block; padding: 0 .5rem; }
+  .diff-del { color: var(--err); background: #3a1a1f; display: block; padding: 0 .5rem; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--text-dim); font-size: .85rem; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>🔄 CodeArts → GitCode 流水线迁移案例</h1>
+<p style="color:var(--text-dim); margin-bottom:2rem;">华为云 CodeArts PR 流水线自动转换为 GitCode Actions YAML 工作流 — 完整过程记录</p>
+
+<div class="meta">
+  <dl>
+    <dt>案例名称</dt><dd>MultimodalSDK PR 流水线迁移</dd>
+    <dt>源流水线</dt><dd>CodeArts <code>PR-pipeline_MultimodalSDK</code> (Region: cn-north-4)</dd>
+    <dt>源仓库</dt><dd><code>Ascend/MultimodalSDK</code> (GitCode)</dd>
+    <dt>测试组织</dt><dd><code>ComputingActionTest</code></dd>
+    <dt>迁移工具</dt><dd>Claude Code + <code>/codearts-to-gitcode</code> skill</dd>
+    <dt>日期</dt><dd>2026-07-30</dd>
+    <dt>最终结果</dt><dd><span class="badge badge-ok">成功转换并推送到测试仓库</span></dd>
+  </dl>
+</div>
+
+<div class="toc">
+<strong>目录</strong>
+<ul>
+  <li><a href="#sec1">1. 任务背景与输入</a></li>
+  <li><a href="#sec2">2. 对话过程</a>
+    <ul>
+      <li><a href="#chat1">2.1 初始请求</a></li>
+      <li><a href="#chat2">2.2 配置完成告知</a></li>
+      <li><a href="#chat3">2.3 语法问题反馈</a></li>
+    </ul>
+  </li>
+  <li><a href="#sec3">3. 阶段一：抓取流水线配置</a></li>
+  <li><a href="#sec4">4. 阶段二：分析与转换</a>
+    <ul>
+      <li><a href="#sec4-1">4.1 流水线结构解析</a></li>
+      <li><a href="#sec4-2">4.2 统一资源池模式识别</a></li>
+      <li><a href="#sec4-3">4.3 CI 仓库脚本迁移</a></li>
+      <li><a href="#sec4-4">4.4 Job 映射表</a></li>
+    </ul>
+  </li>
+  <li><a href="#sec5">5. 阶段三：生成 YAML 文件</a></li>
+  <li><a href="#sec6">6. 阶段四：推送到 GitCode</a></li>
+  <li><a href="#sec7">7. 阶段五：验证与修复</a></li>
+  <li><a href="#sec8">8. 最终交付物清单</a></li>
+  <li><a href="#sec9">9. 经验教训</a></li>
+</ul>
+</div>
+
+<!-- ============ 1. Task Background ============ -->
+<h2 id="sec1"><span class="step-num">1</span> 任务背景与输入</h2>
+
+<p>用户提供了一个运行在华为云 CodeArts 上的 PR 流水线链接，要求将其转换为 GitCode Actions YAML 格式，并推送到指定测试组织验证。输入参数包括：</p>
+
+<table>
+<tr><th>参数</th><th>值</th></tr>
+<tr><td>流水线 URL</td><td><code>https://devcloud.cn-north-4.huaweicloud.com/cicd/project/609138a9.../pipeline/detail/44a32df0...</code></td></tr>
+<tr><td>测试组织</td><td><code>https://gitcode.com/ComputingActionTest</code></td></tr>
+<tr><td>GitCode Token</td><td><code>*********</code></td></tr>
+<tr><td>CodeArts Cookie</td><td>（包含 session、cftk 等完整登录态）</td></tr>
+</table>
+
+<div class="callout key">
+  <strong>关键前置条件：</strong>
+  CodeArts REST API 需要带 <code>cftk</code> CSRF token 和完整 cookie 才能返回 JSON；否则会返回 SPA HTML 页面。cftk 从 cookie 字段 <code>devclouddevuibjtcftk</code> 提取，region 从 <code>*_cfProjectName</code> 提取。
+</div>
+
+<!-- ============ 2. Conversation ============ -->
+<h2 id="sec2"><span class="step-num">2</span> 对话过程</h2>
+
+<h3 id="chat1">2.1 初始请求</h3>
+<div class="chat-box chat-user">
+  <div class="role">👤 用户</div>
+  <p>调用 <code>/codearts-to-gitcode</code> skill，参数包括流水线链接、测试组织、token、cookie。</p>
+</div>
+<div class="chat-box chat-assistant">
+  <div class="role">🤖 助手</div>
+  <p>读取 skill 参考文件（api-reference、conversion-rules、static-check-mapping、secrets-mapping、faq、templates），然后分四阶段执行：抓取配置 → 转换 → 推送 → 验证。</p>
+  <ul>
+    <li>解析 URL/cookie 得到 <code>project_id=609138a9...</code>, <code>pipeline_id=44a32df0...</code>, <code>cftk=IOCU-MJW7-O9VR-73NJ-LXTP-F01I-QNVB-Z6K4</code>, region=cn-north-4</li>
+    <li>通过 <code>GET /cicd/v5/internal/.../pipelines/...</code> 获取流水线定义</li>
+    <li>遍历 9 个 job 配置，识别出 2 个 disabled job、2 个 CI-Clone job（需消除）、3 个 unified-pool build 相关 job</li>
+    <li>生成 YAML 文件，fork 源仓库到 ComputingActionTest，push workflows/，创建测试 PR</li>
+  </ul>
+</div>
+
+<h3 id="chat2">2.2 配置完成告知</h3>
+<div class="chat-box chat-user">
+  <div class="role">👤 用户</div>
+  <p>私密参数，启用Actions，启用PR预合并这些我都设置了。</p>
+</div>
+<div class="chat-box chat-assistant">
+  <div class="role">🤖 助手</div>
+  <p>确认 secrets/Actions/PR预合并 配置完毕，创建测试分支 <code>master_test</code>，先提交一个 .md 文件（触发 md_check），再追加一个 .txt 文件（触发完整流水线），创建 PR #1。</p>
+</div>
+
+<h3 id="chat3">2.3 语法问题反馈</h3>
+<div class="chat-box chat-user">
+  <div class="role">👤 用户</div>
+  <p>有语法问题: 阶段命名CodeCheck&Build&Test这里&amp;不符合语法规范，&amp;可以换成_</p>
+</div>
+<div class="chat-box chat-assistant">
+  <div class="role">🤖 助手</div>
+  <p>确认问题：stage name 中的 <code>&amp;</code> 是 YAML 特殊字符/不被 GitCode 解析器接受。立即将 <code>CodeCheck&Build&Test</code> 改为 <code>CodeCheck_Build_Test</code>，在 master 和 master_test 分支上分别提交并 push。</p>
+</div>
+
+<!-- ============ 3. Phase 1: Fetch ============ -->
+<h2 id="sec3"><span class="phase-tag phase-fetch">Phase 1</span> 抓取流水线配置</h2>
+
+<p>使用 PowerShell + <code>curl.exe</code>（规避 Invoke-RestMethod 的 TLS/证书问题），构造包含所有必要 header 的请求：</p>
+
+<pre><code># 从 cookie 提取认证信息
+$cftk = [regex]::Match($cookies, 'devclouddevuibjtcftk=([^;]+)').Groups[1].Value
+$region = "cn-north-4"
+$base = "https://devcloud.${region}.huaweicloud.com"
+
+# 获取流水线定义
+$pipelineJson = & curl.exe -sk `
+  -H "Cookie: $cookies" `
+  -H "X-Requested-With: XMLHttpRequest" `
+  -H "cftk: $cftk" `
+  -H "Accept: application/json" `
+  -H "language: zh-cn" `
+  -H "projectname: $region" `
+  "$base/cicd/v5/internal/$projectId/pipelines/$pipelineId"
+
+# definition 是 JSON 字符串，需要二次解析
+$definition = $pipeline.definition | ConvertFrom-Json</code></pre>
+
+<h3>获取到的关键信息</h3>
+<ul>
+  <li><strong>流水线名称</strong>: <code>PR-pipeline_MultimodalSDK</code></li>
+  <li><strong>源仓库</strong>: <code>https://gitcode.com/Ascend/MultimodalSDK.git</code> (默认分支: master)</li>
+  <li><strong>敏感变量</strong>: <code>Atlas_password</code> (secret), <code>presmoke_image</code>, <code>TARGET_BRANCH</code>, <code>REMOTE_URL</code></li>
+</ul>
+
+<p>之后对每个 enabled 的 CloudBuild step，提取 <code>jobId</code> 并调用 <code>GET /codeci/v1/job/&lt;job_id&gt;/config?get_all_params=true</code> 获取详细配置，共 9 个 job 配置文件保存为 JSON。</p>
+
+<!-- ============ 4. Phase 2: Transform ============ -->
+<h2 id="sec4"><span class="phase-tag phase-transform">Phase 2</span> 分析与转换</h2>
+
+<h3 id="sec4-1">4.1 流水线结构解析</h3>
+
+<p>流水线有 2 个 stage：</p>
+
+<table>
+<tr><th>Stage</th><th>Job</th><th>Strategy</th><th>处理方式</th></tr>
+<tr><td>prepare (stage_0)</td><td>执行Shell</td><td><span class="badge badge-skip">never</span></td><td>跳过（禁用）</td></tr>
+<tr><td></td><td>Clone_Private_Repository</td><td><span class="badge badge-ok">selected</span></td><td><span class="badge badge-del">消除</span>（CI clone + OBS 上传）</td></tr>
+<tr><td></td><td>md_check</td><td><span class="badge badge-ok">selected</span></td><td>→ Only_doc_commit_check inline job</td></tr>
+<tr><td></td><td>Clone_Private_Static</td><td><span class="badge badge-ok">selected</span></td><td><span class="badge badge-del">消除</span>（CI clone + OBS 上传）</td></tr>
+<tr><td>构建检查_编译_UT (stage_1)</td><td>CodeCheck_pre-commit</td><td><span class="badge badge-skip">never</span></td><td>跳过（禁用）</td></tr>
+<tr><td></td><td>SCA</td><td><span class="badge badge-ok">selected</span></td><td>→ sca-pr-scan plugin</td></tr>
+<tr><td></td><td>Antipoison</td><td><span class="badge badge-ok">selected</span></td><td>→ container+script (anti_poison.py)</td></tr>
+<tr><td></td><td>UT_cpp</td><td><span class="badge badge-ok">selected</span></td><td>→ .ut_cpp.yml sub-workflow</td></tr>
+<tr><td></td><td>Build_arm</td><td><span class="badge badge-ok">selected</span></td><td>→ .build_job.yml sub-workflow</td></tr>
+<tr><td></td><td>PreSmoke</td><td><span class="badge badge-ok">selected</span></td><td>→ .presmoke.yml sub-workflow</td></tr>
+<tr><td></td><td>PR-build-SAST-check</td><td><span class="badge badge-ok">selected</span></td><td>→ container+script (AI-Check)</td></tr>
+<tr><td></td><td>pre-commit</td><td><span class="badge badge-ok">selected</span></td><td>→ openlibing-pre-commit-action plugin</td></tr>
+</table>
+
+<h3 id="sec4-2">4.2 统一资源池（Unified Pool）模式识别</h3>
+
+<p>Build_arm、UT_cpp、PreSmoke 三个 job 均采用 CodeArts <strong>统一资源池模式</strong>，特征如下：</p>
+
+<ul>
+  <li>Step 顺序：<code>执行shell命令</code> (20017) → <code>下载文件管理的文件</code> (20061) → <code>使用SWR公共镜像</code> (20028)</li>
+  <li>SWR 镜像：<code>swr.cn-southwest-2.myhuaweicloud.com/modelfoundry/karmada:latest</code>（karmada 调度器）</li>
+  <li>SWR 命令：<code>/workspace/workflowtool/entrypoint.sh</code></li>
+  <li>Job 参数包含 <code>CP_docker_image</code> 和 <code>CP_runs_on</code></li>
+</ul>
+
+<div class="callout key">
+  <strong>转换规则：</strong>
+  <ol>
+    <li><strong>丢弃 step 2</strong>（下载 kubeconfig）— CodeArts 调度基础设施</li>
+    <li><strong>丢弃 step 3</strong>（karmada 容器）— 跨集群调度无需在 GitCode 中实现</li>
+    <li><strong>从 step 1 的 heredoc 中提取真实脚本</strong>（<code>cat &gt; shell.sh &lt;&lt;- 'EOF' ... EOF</code>）</li>
+    <li><strong>容器镜像使用 <code>CP_docker_image</code></strong>（非 karmada wrapper）：<code>swr.cn-north-4.myhuaweicloud.com/ascend-mindx/mindx_arm:SDK_20260112_1</code></li>
+    <li><strong>runs-on 映射</strong>：<code>arm64-cpu-*-mem-*</code> → <code>arm64</code>；<code>arm64-npu-*</code> → <code>arm64</code> + <code>npu</code> 标签</li>
+  </ol>
+</div>
+
+<p>例如 Build_arm 的 heredoc 提取后得到构建脚本，核心逻辑包括：clone dev repo → fetch PR ref → merge → wget CI tar（被消除）→ <code>cd ci/MultimodalSDK &amp;&amp; bash prepare_dependency.sh</code> → <code>obsutil cp obs://mindcluster/opensource.tar.gz</code> → <code>cd build_script &amp;&amp; bash build_merge.sh</code> → 收集 .run 产物。</p>
+
+<h3 id="sec4-3">4.3 CI 仓库脚本迁移（Category A vs B）</h3>
+
+<p>区分两类脚本是转换正确的关键：</p>
+
+<table>
+<tr><th>分类</th><th>说明</th><th>处理方式</th></tr>
+<tr><td><strong>Category A</strong>（目标仓库内）</td><td>clone dev repo 后 <code>cd ${servicename_1}/build_script</code> 下的脚本，如 <code>build_merge.sh</code>、<code>run_presmoke.sh</code></td><td><span class="badge badge-ok">保留原路径</span>，不移动</td></tr>
+<tr><td><strong>Category B</strong>（外部 CI 仓库）</td><td>从 <code>MindCluster-CI</code> 或 <code>MindSDK-CI</code> clone/wget 的脚本，如 <code>codesca.py</code>、<code>anti_poison.py</code>、<code>prepare_dependency.sh</code></td><td><span class="badge badge-info">迁移到 scripts/</span>，消除 CI clone 逻辑</td></tr>
+</table>
+
+<p>本案例涉及两个 CI 仓库：</p>
+<ul>
+  <li><code>Ascend/MindCluster-CI</code>（被 Clone_Private_Static 和 SCA/Antipoison/pre-commit job 引用）→ 含 <code>codesca.py</code>、<code>anti_poison.py</code>、<code>precommit_check.sh</code>、<code>codecheck.py</code></li>
+  <li><code>Ascend/MindSDK-CI</code>（被 Clone_Private_Repository 和 Build/UT/PreSmoke job 引用）→ 含 <code>MultimodalSDK/prepare_dependency.sh</code></li>
+</ul>
+
+<div class="callout err">
+  <strong>实际问题：</strong>尝试通过 <code>curl</code> 匿名下载这些脚本时，返回的是登录 HTML 页面（两个 CI 仓库均为私有）。因此全部创建了<strong>空占位文件</strong>，在 summary 中提示用户手动填充。
+</div>
+
+<h3 id="sec4-4">4.4 Job 映射表（最终转换结果）</h3>
+
+<table>
+<tr><th>CodeArts Job</th><th>GitCode 实现</th><th>关键细节</th></tr>
+<tr>
+  <td>md_check</td>
+  <td>inline job + <code>only_doc_commit_check</code> action</td>
+  <td>输出 build_skip，下游 job 用 <code>if: jobs.*.outputs.build_skip == 'no'</code></td>
+</tr>
+<tr>
+  <td>SCA</td>
+  <td>inline job + <code>sca-pr-scan</code> plugin</td>
+  <td>需要 <code>SCAN_ACCESS_KEY</code>/<code>SCAN_SECRET_KEY</code>；project-name 设为 MultimodalSDK</td>
+</tr>
+<tr>
+  <td>Antipoison</td>
+  <td>container: <code>demo_mindx:mindxdl_20230912_1</code> + python script</td>
+  <td>镜像含老版本 git 2.17，<strong>需要 git upgrade step</strong> before checkout</td>
+</tr>
+<tr>
+  <td>pre-commit</td>
+  <td>container: <code>mindspore_python3.11:v0.1</code> + <code>openlibing-pre-commit-action</code></td>
+  <td>Python 3.11 symlink；需要 <code>ACCESS_QK</code> secret</td>
+</tr>
+<tr>
+  <td>PR-build-SAST-check</td>
+  <td>container: <code>mindx_x86:mindxdl_go1207_20251203</code> + script</td>
+  <td>clone TuBee/AI-Check，运行 check.sh</td>
+</tr>
+<tr>
+  <td>Build_arm</td>
+  <td><code>.build_job.yml</code> workflow_call</td>
+  <td>arm64；obs-upload 产物 .run 包到 mindx-package bucket</td>
+</tr>
+<tr>
+  <td>UT_cpp</td>
+  <td><code>.ut_cpp.yml</code> workflow_call</td>
+  <td>arm64；git-lfs pull；调用 build_merge.sh test</td>
+</tr>
+<tr>
+  <td>PreSmoke</td>
+  <td><code>.presmoke.yml</code> workflow_call</td>
+  <td><code>runs-on: [dedicate-hosted, arm64, npu, large]</code>；wget .run 包后执行 run_presmoke.sh</td>
+</tr>
+</table>
+
+<!-- ============ 5. Phase 3: YAML Generation ============ -->
+<h2 id="sec5"><span class="phase-tag phase-transform">Phase 3</span> 生成 YAML 文件</h2>
+
+<p>最终文件结构：</p>
+
+<div class="file-tree">
+<span class="dir">.gitcode/workflows/</span><br>
+├── <span class="file">PR-pipeline_full.yml</span>  <span class="comment"># 入口工作流</span><br>
+├── <span class="file">.build_job.yml</span>        <span class="comment"># 编译子工作流 (arm64)</span><br>
+├── <span class="file">.ut_cpp.yml</span>          <span class="comment"># C++ UT 子工作流 (arm64)</span><br>
+├── <span class="file">.presmoke.yml</span>        <span class="comment"># PreSmoke 子工作流 (arm64+NPU)</span><br>
+└── <span class="dir">scripts/</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── <span class="file">anti_poison.py</span>       <span class="comment"># PLACEHOLDER</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── <span class="file">codesca.py</span>          <span class="comment"># PLACEHOLDER</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── <span class="file">codecheck.py</span>        <span class="comment"># PLACEHOLDER</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── <span class="file">precommit_check.sh</span>  <span class="comment"># PLACEHOLDER</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="dir">MultimodalSDK/</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="file">prepare_dependency.sh</span>  <span class="comment"># PLACEHOLDER</span>
+</div>
+
+<h3>入口工作流关键设计</h3>
+<pre><code># PR-pipeline_full.yml 核心结构
+name: PR-pipeline_full
+on:
+  pull_request_target:
+    branches: [master]
+    types: [open, update, reopen, merge]
+  pull_request_comment:
+    types: [created]
+    branches: ['*']
+    comments: ['^(?:\/)?compile*']
+  workflow_dispatch:
+
+env:  # 使用 env 而非 inputs，避免 PR 触发时 inputs 未被填充
+  BUILD_SKIP: "no"
+  REPO_NAME: ${{ atomgit.event.repository.name }}
+  PR_ID: ${{ atomgit.event.pull_request.number }}
+  TARGET_BRANCH: ${{ atomgit.event.pull_request.base.ref }}
+  REMOTE_URL: ${{ atomgit.repositoryurl }}
+
+stages:
+  stage_0:
+    name: CodeCheck  # & → _ （修复后）
+    jobs:
+      Only_doc_commit_check: ...
+  stage_1:
+    name: CodeCheck_Build_Test  # 原 CodeCheck&Build&Test，& 不符合语法
+    jobs:
+      SCA: ...
+      Antipoison: ...
+      pre_commit: ...
+      SAST: ...
+      Build_arm: { uses: .gitcode/workflows/.build_job.yml, with: { IMAGE_FLAG: "mindx_arm:SDK_20260112_1", runs_on_arch: "arm64" } }
+      UT_cpp: { uses: .gitcode/workflows/.ut_cpp.yml, ... }
+      PreSmoke: { uses: .gitcode/workflows/.presmoke.yml, ... }</code></pre>
+
+<h3>关键转换点</h3>
+
+<h4>1. env: 而非 inputs:（入口工作流）</h4>
+<p>PR 触发时 <code>inputs</code> 不会被 atomgit context 填充，必须用 <code>env:</code> 定义系统变量，通过 <code>${{ env.PR_ID }}</code> 引用。子工作流可以正常用 inputs（因为 uses 显式传参）。</p>
+
+<h4>2. 容器镜像必须是字面量（入口工作流）</h4>
+<p>入口工作流中 <code>container.image</code> 必须是硬编码字符串，不能是 <code>${{ env.xxx }}</code>，因为容器解析在 env 评估之前完成。</p>
+
+<h4>3. git merge committer identity</h4>
+<p>所有 clone+merge 步骤在 <code>git merge</code> 前必须配置身份，否则容器内 git 报错：</p>
+<pre><code>git config --global user.name AtlasAccount
+git config --global user.email AtlasAccount@noreply.gitcode.com
+git merge --no-edit pr_${{ inputs.PR_ID }}</code></pre>
+
+<h4>4. CWD 不跨 step 持久化</h4>
+<p>GitCode 每个 <code>run:</code> block 都从 <code>${ATOMGIT_WORKSPACE}</code> 重新开始。将单一 heredoc 拆分为多个步骤时，每步开头必须显式 <code>cd</code> 到正确绝对路径。为安全起见，本案例将 build 步骤合并为较少的大块。</p>
+
+<!-- ============ 6. Phase 4: Push ============ -->
+<h2 id="sec6"><span class="phase-tag phase-push">Phase 4</span> 推送到 GitCode</h2>
+
+<ol>
+  <li><strong>Fork 源仓库</strong>：<code>POST /api/v5/repos/Ascend/MultimodalSDK/forks</code>，body 指定 <code>organization: ComputingActionTest</code>，返回 fork id=10492247</li>
+  <li><strong>Clone fork</strong>：<code>git clone https://qinkeke:${token}@gitcode.com/ComputingActionTest/MultimodalSDK.git</code></li>
+  <li><strong>拷贝 workflows</strong>：将生成的 YAML 和 scripts/ 复制到 <code>.gitcode/workflows/</code></li>
+  <li><strong>Commit &amp; Push</strong>：<code>git add -A &amp;&amp; git commit &amp;&amp; git push origin master</code></li>
+</ol>
+
+<pre><code># GitCode Fork API 注意：body 必须用 ASCII 编码写入文件后通过 --data-binary 传递
+# PowerShell 的 ConvertTo-Json | Out-File 默认带 BOM 会导致 400 错误
+[System.IO.File]::WriteAllText($bodyFile, $bodyJson, [System.Text.Encoding]::ASCII)
+
+curl.exe -sk -X POST \
+  -H "PRIVATE-TOKEN: $token" \
+  -H "Content-Type: application/json" \
+  --data-binary "@$bodyFile" \
+  "https://gitcode.com/api/v5/repos/Ascend/MultimodalSDK/forks"</code></pre>
+
+<!-- ============ 7. Phase 5: Verify & Fix ============ -->
+<h2 id="sec7"><span class="phase-tag phase-verify">Phase 5</span> 验证与修复</h2>
+
+<h3>测试 PR 策略</h3>
+<ol>
+  <li>创建分支 <code>master_test</code>，添加 <code>CI_TEST_TRIGGER.md</code>（仅 .md 变更 → 验证 md_check 跳过逻辑）</li>
+  <li>追加 <code>pipeline_test_trigger.txt</code>（非 .md 变更 → 触发完整流水线）</li>
+  <li>创建 PR #1: <code>master_test → master</code></li>
+</ol>
+
+<h3>发现并修复的语法问题</h3>
+
+<div class="callout err">
+  <strong>问题：</strong>阶段名 <code>CodeCheck&Build&Test</code> 中 <code>&amp;</code> 字符不符合 GitCode YAML 解析器规范，流水线无法正确识别阶段。
+</div>
+
+<p><strong>修复：</strong></p>
+<pre><code><span class="diff-del">-    name: CodeCheck&Build&Test</span>
+<span class="diff-add">+    name: CodeCheck_Build_Test</span></code></pre>
+
+<p>分别在 master 和 master_test 分支提交并 push：</p>
+<pre><code>git checkout master
+# 修复文件后
+git commit -m "fix: replace & with _ in stage name (CodeCheck_Build_Test)"
+git push origin master
+git checkout master_test
+git push origin master_test</code></pre>
+
+<!-- ============ 8. Deliverables ============ -->
+<h2 id="sec8"><span class="step-num">8</span> 最终交付物清单</h2>
+
+<h3>仓库地址</h3>
+<ul>
+  <li><strong>测试 fork</strong>: <code>https://gitcode.com/ComputingActionTest/MultimodalSDK</code></li>
+  <li><strong>测试 PR</strong>: <code>https://gitcode.com/ComputingActionTest/MultimodalSDK/merge_requests/1</code></li>
+</ul>
+
+<h3>生成的文件（9 个）</h3>
+<table>
+<tr><th>文件</th><th>类型</th><th>说明</th></tr>
+<tr><td><code>PR-pipeline_full.yml</code></td><td>YAML</td><td>入口工作流，包含 md_check/SCA/Antipoison/pre-commit/SAST/Build/UT/PreSmoke</td></tr>
+<tr><td><code>.build_job.yml</code></td><td>YAML</td><td>arm64 编译子工作流（workflow_call）</td></tr>
+<tr><td><code>.ut_cpp.yml</code></td><td>YAML</td><td>C++ UT 子工作流（workflow_call）</td></tr>
+<tr><td><code>.presmoke.yml</code></td><td>YAML</td><td>PreSmoke 子工作流（arm64+npu）</td></tr>
+<tr><td><code>scripts/codesca.py</code></td><td>Placeholder</td><td>需手动从 MindCluster-CI 下载</td></tr>
+<tr><td><code>scripts/anti_poison.py</code></td><td>Placeholder</td><td>需手动从 MindCluster-CI 下载</td></tr>
+<tr><td><code>scripts/precommit_check.sh</code></td><td>Placeholder</td><td>需手动从 MindCluster-CI 下载</td></tr>
+<tr><td><code>scripts/codecheck.py</code></td><td>Placeholder</td><td>需手动从 MindCluster-CI 下载</td></tr>
+<tr><td><code>scripts/MultimodalSDK/prepare_dependency.sh</code></td><td>Placeholder</td><td>需手动从 MindSDK-CI 下载</td></tr>
+</table>
+
+<h3>需用户配置的 Secrets</h3>
+<table>
+<tr><th>Secret</th><th>用途</th></tr>
+<tr><td><code>SCAN_ACCESS_KEY</code> / <code>SCAN_SECRET_KEY</code></td><td>SCA 扫描插件</td></tr>
+<tr><td><code>ACCESS_QK</code></td><td>pre-commit 插件 / SAST</td></tr>
+<tr><td><code>APPID_TASK_ANTI</code> / <code>SECRETKEY_TASK_ANTI</code></td><td>Antipoison API 网关</td></tr>
+<tr><td><code>APPID_STATUS_ANTI</code> / <code>SECRETKEY_STATUS_ANTI</code></td><td>Antipoison API 网关</td></tr>
+<tr><td><code>OBS_AK</code> / <code>OBS_SK</code></td><td>OBS 产物上传（build job）</td></tr>
+</table>
+
+<!-- ============ 9. Lessons Learned ============ -->
+<h2 id="sec9"><span class="step-num">9</span> 经验教训</h2>
+
+<ol>
+  <li>
+    <strong>CodeArts API 认证必须齐全</strong>：缺少 <code>X-Requested-With: XMLHttpRequest</code> 或 <code>cftk</code> header 会返回 SPA HTML 而非 JSON。
+  </li>
+  <li>
+    <strong>PowerShell 调用 curl.exe 时 body 编码坑</strong>：<code>ConvertTo-Json | Out-File</code> 默认带 BOM，导致 API 返回 400 "Request body parsing error"。必须用 <code>[System.IO.File]::WriteAllText(path, json, [System.Text.Encoding]::ASCII)</code>。
+  </li>
+  <li>
+    <strong>GitCode Fork API 参数名</strong>：创建 fork 时 body 内的组织字段为 <code>"organization"</code>（不是 <code>"org"</code>）；创建 PR 时分支字段为 <code>"head"</code>/<code>"base"</code>（不是 <code>"source_branch"</code>/<code>"target_branch"</code>）。
+  </li>
+  <li>
+    <strong>stage name 不能含特殊字符</strong>：<code>&amp;</code>、<code>?</code>、<code>*</code> 等在 GitCode stage name 中会导致解析错误。命名使用 <code>_</code> 连接，如 <code>CodeCheck_Build_Test</code>。
+  </li>
+  <li>
+    <strong>入口工作流用 env: 而非 inputs:</strong>：<code>inputs</code> 在 PR 触发时不会从 atomgit context 填充，导致 "Input required and not supplied"。系统变量一律放 <code>env:</code>。
+  </li>
+  <li>
+    <strong>demo_mindx 镜像需要 git upgrade</strong>：老版镜像 <code>huawei-ascend/demo_mindx:mindxdl_20230912_1</code> 自带 git 2.17，低于 checkout action 要求的 2.18，必须在 checkout 前添加 PPA git 升级 step。
+  </li>
+  <li>
+    <strong>私有 CI 仓库无法匿名下载脚本</strong>：需要预判这种情况，创建 placeholder 文件并在 summary 中明确提示用户手动填充，不能假设 CI 仓库公开。
+  </li>
+  <li>
+    <strong>Category A/B 脚本区分</strong>：不能看到 <code>bash script/xxx.sh</code> 就认定是 CI 脚本。必须判断该路径是在 clone dev repo 后（Category A，保留）还是在 clone CI repo 后（Category B，迁移）。错误迁移会导致路径不匹配的运行时错误。
+  </li>
+  <li>
+    <strong>PreSmoke 需要 npu runs-on 标签</strong>：当 <code>CP_runs_on</code> 包含 <code>npu</code> 时（如 <code>arm64-npu-1-cpu-64-mem-128G</code>），runs-on 需加入 <code>npu</code> 标签：<code>[dedicate-hosted, arm64, npu, large]</code>。
+  </li>
+  <li>
+    <strong>测试 PR 需非 .md 文件才能触发完整流水线</strong>：md_check job 会在 PR 仅修改 .md 文件时将 build_skip 设为 "yes"，导致下游所有 job 被跳过。验证完整流水线时需提交非 .md 文件。
+  </li>
+</ol>
+
+<footer>
+  <p>案例生成时间：2026-07-30 | 工具：Claude Code + codearts-to-gitcode skill</p>
+</footer>
+
+</body>
+</html>
