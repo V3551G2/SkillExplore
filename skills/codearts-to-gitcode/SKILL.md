@@ -272,6 +272,31 @@ on:
 8. **Artifact upload:** Replace CodeArts OBS upload steps with GitCode's `obs-upload` action.
    Replace CodeArts "下载文件管理的文件" (file download) steps with appropriate fetch logic.
 
+8a. **obsutil cp → wget for OBS dependency downloads:** When a job script uses `obsutil cp` to
+    download dependency tarballs/packages from OBS (separate from CI-repo elimination — these
+    are build dependencies like toolchains, third-party packages), convert to an equivalent
+    `wget` from the OBS public HTTP endpoint. The `obsutil` binary may not be available in
+    GitCode containers, and wget is universally present.
+
+    Pattern:
+    ```
+    obsutil cp obs://<bucket>/<path>/<file>.tar.gz  <local>/<file>.tar.gz
+    ```
+    Converts to:
+    ```
+    wget -O <local>/<file>.tar.gz https://<bucket>.obs.<region>.myhuaweicloud.com/<path>/<file>.tar.gz
+    ```
+
+    - `<region>` defaults to `cn-north-4`. Extract the actual region from the pipeline URL
+      (e.g., `devcloud.cn-north-4.huaweicloud.com`) or from cookie `cfProjectName=<region>`.
+    - Preserve any `-f`/overwrite semantics by adding `rm -f <target>` before wget if needed.
+    - Do NOT convert obsutil lines that download CI-repo content — those are eliminated entirely
+      per rule #1 (CI scripts migrate to `.gitcode/workflows/scripts/`). This rule is only for
+      third-party/toolchain dependencies that remain OBS-hosted.
+    - Preserve commented-out obsutil config lines (e.g., `# obsutil config -i=...`) as-is.
+
+    See `references/conversion-rules.md` "obsutil cp → wget conversion" for details.
+
 9. **PR merge logic in build/UT jobs:** The sub-workflow must check out the target branch, fetch the PR
    head ref, and merge. Before `git merge`, set the committer identity to avoid "Committer identity unknown"
    errors in fresh containers (see `references/faq.md` "Git merge: committer identity unknown"):
@@ -293,6 +318,14 @@ on:
     CodeArts script are intentionally disabled — respect that. Substitute variables (WORKSPACE→ATOMGIT_WORKSPACE,
     secret params→secrets.XXX, etc.) and eliminate CI-repo download logic as instructed, but do not
     change the active/commented status of unrelated lines.
+
+11. **Strip debug-only echo/print steps.** When generating YAML steps (whether from templates or
+    from CodeArts script analysis), do NOT include steps that only print environment variables or
+    echo diagnostic information (e.g., `echo "pr_id=..."`, `echo "IMAGE_FLAG=..."`, `pwd`, `env | sort`).
+    These are leftover debugging aids and add noise to CI logs without functional value. The build
+    step's own `set -ex` already provides sufficient trace output. Remove any such step from both
+    templates AND converted job YAML. The only "print" steps to keep are ones that output actual
+    build artifacts (like `cat ${ATOMGIT_WORKSPACE}/change.txt` which shows changed files).
 
 ### Phase 3: Output and Validate
 
@@ -320,13 +353,15 @@ on:
      or B, PRESERVE the original path and flag it for user review
    - Any tasks that could not be automatically converted and need manual attention
 
-### Phase 4 (Optional): Push to GitCode, Verify, Fix (closed loop)
+### Phase 4: Push to GitCode, Verify, Fix (CLOSED LOOP — do NOT stop at link handoff)
 
 If the user provides:
 - A **test organization** (e.g., `https://gitcode.com/ComputingActionTest`)
 - A **GitCode access token** with repo creation/push permissions
 
-Then proceed with the following optional closed-loop steps. Reference: https://gitcode.com/gitcode-cli/skills
+Then run the full closed loop. This is NOT optional when both org and token are supplied.
+The goal is to proactively drive every job to either **success** or **documented human-action-required**,
+not to hand back a link and walk away. Reference: https://gitcode.com/gitcode-cli/skills
 
 **Step 4a — Push YAML to fork repository:**
 1. Create a fork repo in the test organization with the same name as the pipeline's source repo
@@ -335,29 +370,181 @@ Then proceed with the following optional closed-loop steps. Reference: https://g
 3. Commit generated `.gitcode/workflows/*.yml` and `.gitcode/workflows/scripts/*` to the fork default branch.
 4. Remind the user to perform these post-push setup steps in the fork repo:
 
-   a. **Configure required secrets** in repo Settings → Secrets and variables → Actions.
+   a. **Configure required secrets** in repo Settings → Secrets and variables → Actions
+      (list them from secrets-mapping.md and the actual parameters encountered).
    b. **Enable Actions**: Project Settings → Enable Actions → Save.
-   c. **Enable PR pre-merge**: Project Settings → Repository Management / Repository Settings → select "Merge Request PR Pre-Merge" (合并请求PR预合并) → Save.
-      This is required for `pull_request_target` triggers and PR pre-merge behavior to work correctly.
+   c. **Enable PR pre-merge**: Project Settings → Repository Management → "Merge Request PR Pre-Merge"
+      (合并请求PR预合并) → Save. Required for `pull_request_target` triggers.
 
-**Step 4b — Verify / Validate:**
-1. Create a test branch `<default_branch>_test` from default branch.
-2. Simulate file changes (add a file or modify comments in existing files) to trigger all jobs.
-3. Create a PR (`<default_branch>_test` → default branch).
-4. Monitor pipeline execution. Re-trigger by pushing updates or adding `/compile` PR comment.
-5. Check results for each job.
+   Wait for the user to confirm steps a–c are done before proceeding. Do not create the test PR
+   until they confirm; otherwise the first pipeline run will hit avoidable secret/config errors.
 
-**Step 4c — Fix Issues:**
-1. Determine if error is from generated YAML or environment/secrets.
-2. If YAML bug: fix YAML, push fix, re-run test PR. Update this skill with the lesson.
-3. If environment issue: report to user with guidance.
+**Step 4b — Create test PR:**
+1. From default branch, create a test branch named `<default_branch>_test`.
+2. Make TWO commits to exercise both paths of md_check:
+   - First commit: add a `.md` file (e.g. `CI_TEST_TRIGGER.md`) — lets you confirm the doc-only skip works.
+   - Second commit (on same branch): add a non-`.md` file (e.g. `pipeline_test_trigger.txt`) — triggers the full pipeline.
+3. Push and create a PR (`<default_branch>_test` → default branch).
+4. Record the PR number and share the PR URL with the user.
+
+**Step 4c — Proactive monitor-and-fix loop (THE CORE OF THIS PHASE):**
+
+After the PR is created, **do NOT just hand back the link and stop**. Drive the pipeline to
+resolution using the following polling + diagnosis + fix loop.
+
+**Polling:** Use `ScheduleWakeup` to wake every 60–120 seconds and re-check the pipeline status
+via the GitCode API (base URL `https://api.gitcode.com/api/v8` — **hostname is `api.gitcode.com`,
+NOT `gitcode.com`**; auth header `PRIVATE-TOKEN: <token>`). Between checks you are idle. Continue
+until all jobs reach a terminal state (`COMPLETED`, `FAILED`, or `CANCELLED`). Official API docs:
+https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs
+
+Use these v8 endpoints (all on `https://api.gitcode.com`):
+```
+GET  /api/v8/repos/<owner>/<repo>/actions/runs?per_page=5                  # list recent runs
+GET  /api/v8/repos/<owner>/<repo>/actions/runs/<workflow_run_id>            # get run details (includes stages→jobs→steps)
+GET  /api/v8/repos/<owner>/<repo>/actions/runs/<workflow_run_id>/jobs       # list jobs in a run
+GET  /api/v8/repos/<owner>/<repo>/actions/runs/<workflow_run_id>/jobs/<job_id>  # get job details
+POST /api/v8/repos/<owner>/<repo>/actions/runs/<workflow_run_id>/jobs/<job_id>/logs  # paginated log text (JSON)
+GET  /api/v8/repos/<owner>/<repo>/actions/runs/<workflow_run_id>/jobs/<job_id>/download_log  # full job log (ZIP of per-step .log files)
+```
+
+**Key response field differences from GitHub Actions:**
+- Run ID is `workflow_run_id` (not `id`), job ID is `id` (hex UUID string)
+- Status values are UPPERCASE: `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`
+- Timestamps are Unix epoch **milliseconds** (not ISO 8601)
+- `download_log` returns a **ZIP file** containing one `.log` file per step (e.g., `0_checkout.log`, `1_Run SCA PR Scan.log`) — save to file, `unzip`, then read individual step logs
+- The run details endpoint (`GET .../runs/<id>`) returns nested `stages[].jobs[].steps[]` in one call
+
+To re-run after a YAML fix, push to master (for `pull_request_target` YAML changes) then trigger
+via `/compile` PR comment using v5 API: `POST https://gitcode.com/api/v5/repos/<owner>/<repo>/pulls/<pr_number>/comments`
+with body `{"body": "/compile"}`.
+
+See `references/api-reference.md` for full Bash/PShell polling examples and response schemas.
+
+For each failed job, run the **failure-handling decision tree** below. Track per-job state in a
+small dict: `{job_name, status, fix_attempts, resolution, notes}`. A job is *resolved* when it is
+either `success`, or `needs_human` (see below), or `known_limit` after 3 fix attempts.
+
+**Failure-handling decision tree (per failed job):**
+
+1. **Fetch the full job log** via the v8 API on `api.gitcode.com`:
+   - `GET .../actions/runs/<workflow_run_id>/jobs/<job_id>/download_log` returns a **ZIP file**
+     with per-step `.log` files. Save to disk, `unzip`, then `tail -n 200` the relevant step log.
+   - If ZIP download fails, try the paginated text endpoint:
+     `POST .../actions/runs/<workflow_run_id>/jobs/<job_id>/logs` returns JSON with
+     `{"has_more": bool, "start_offset": N, "end_offset": N, "log": "..."}`.
+   - Only ask the user to paste the error from the browser UI as a last resort if both fail.
+
+2. **Classify the error** by scanning the log tail for these categories:
+
+   | Category | Signals in log | Action |
+   |---|---|---|
+   | **Needs human (static-check infra)** | `APIG.0303` / auth errors from `sca-pr-scan`, `openlibing`, `anti_poison`; "当前扫描仓库不在openlibing中"; "申请资源" stuck/pending; credential/secret "not found"; "permission denied" on external services | Mark `needs_human`. Tell user exactly which secret/registration/quota is missing, referencing the FAQ entry. Do NOT attempt YAML fixes here — these are environment issues. |
+   | **Bad substitution / input errors** | `bad substitution`, `Input required and not supplied`, `unrecognized input` | 95% of the time caused by entry workflow passing atomgit-defaulted inputs in `with:` (see conversion-rules.md §"do NOT re-pass parameters that already have atomgit defaults"). Fix the entry YAML, push, re-run. |
+   | **Path / file not found** | `No such file or directory`, `script not found`, `command not found` for a script you referenced | FIRST check your own conversion: is a Category A script incorrectly moved to `scripts/`? Did a step split mis-place a `cd` (CWD bug — conversion-rules.md §"CWD tracking")? If yes, fix YAML. If the path is genuinely correct but file missing, check if it's a placeholder script — user needs to populate it. |
+   | **Git / checkout errors** | `git version 2.17, minimum required is 2.18`; `Committer identity unknown`; merge conflicts | Apply known fixes from faq.md (git upgrade step; `git config user.name/email`). Fix YAML, push, re-run. |
+   | **Container / image errors** | image pull backoff, `manifest unknown`, runner label not matched | Verify image string is literal in entry workflow (conversion-rules.md §"Container images must be literal strings"); verify `runs-on` labels. Fix YAML. |
+   | **OBS / obsutil errors** | `AK/SK authentication failed`, `NoSuchBucket`, `obsutil: command not found` | Check secret names (`OBS_AK`/`OBS_SK`); check if `obsutil` is preinstalled in the image (it usually is in `mindx_arm:*` images — if not, add a download step). For auth failures, mark `needs_human` with guidance. |
+   | **Other / unexpected** | Anything else | Attempt up to **3 fixes** (see below). |
+
+3. **Fix-attempt budget**: For any one failing job, try at most **3 substantially different fixes**.
+   "Substantially different" means changing different YAML, not retrying the same edit. If all 3
+   fail, mark `known_limit` and capture the residual error verbatim so the user has a precise report.
+
+4. **Apply the fix (CRITICAL — push to DEFAULT branch, not the test PR branch)**:
+
+   **`pull_request_target` reads workflow YAML from the TARGET (default) branch, NOT from the PR
+   source branch.** This is a deliberate security design in GitCode/GitHub Actions: it prevents
+   untrusted PR code from modifying workflows that run with repo secrets. Therefore:
+
+   - ❌ **Do NOT push YAML fixes only to the test PR branch** — the `pull_request_target` trigger
+     will NOT see them; it will keep running the old YAML from the default branch.
+   - ✅ **Push YAML fixes to the DEFAULT branch** (e.g., `master`). After the fix lands on
+     default branch, re-trigger the pipeline by either:
+     a. Pushing a new (trivial) commit to the test PR branch, or
+     b. Posting a `/compile` comment on the PR (if `pull_request_comment` trigger is configured).
+   - **Sub-workflow files** (`.build_job.yml`, `.ut_*.yml`, etc.) called via `uses: .gitcode/workflows/.xxx.yml`
+     are also resolved from the default branch when triggered by `pull_request_target`, so they
+     must also be fixed on the default branch.
+   - **Scripts** in `.gitcode/workflows/scripts/` are checked out at runtime from the merged code,
+     so script fixes DO take effect from the PR branch — only YAML workflow definitions are
+     read from the target branch.
+
+   Practical workflow:
+   ```bash
+   # Fix YAML on default branch
+   git checkout master
+   # ... edit the broken .yml file(s) ...
+   git add .gitcode/workflows/
+   git commit -m "fix(build): <describe the fix>"
+   git push origin master
+
+   # Re-trigger the pipeline by pushing to the PR branch
+   git checkout master_test
+   git commit --allow-empty -m "retrigger after fix"
+   git push origin master_test
+   ```
+
+   Record each fix attempt in the per-job state with the commit SHA (on master) and a one-line
+   rationale.
+
+5. **After a fix**, wait for the next run (back to polling). If the job now passes, move to next job.
+   If it fails differently, analyze the new error — this counts as the next attempt.
+
+**Keep the user informed, but do not pause for permission on YAML fixes.** For each fix, send a
+short progress line:
+> `Build_arm failed with "No such file: build_merge.sh" — root cause: step split placed cd at workspace root instead of inside repo. Fixed in <sha>, re-running.`
+
+Only pause and ask the user when:
+- A job is marked `needs_human` (infra/secret/registration issues)
+- The 3-attempt budget is exhausted for a job
+- You need information the code/logs cannot provide (e.g. which branch the CI repo uses, an OBS bucket name you cannot infer)
+
+**Step 4d — Final summary and skill feedback loop:**
+
+When every job is resolved (success / needs_human / known_limit), produce a structured summary:
+
+```
+=== Test Run Summary for <repo> PR #<n> ===
+Successful jobs:
+  - Only_doc_commit_check ✅
+  - SCA ✅
+  - Antipoison ✅ (after 1 fix: added git upgrade step)
+  - Build_arm ✅ (after 1 fix: corrected CWD in compile step)
+  - UT_cpp ✅
+Jobs requiring human action:
+  - PreSmoke ⚠️  needs NPU runner not available in this org — see below
+Known limits / unfixed after 3 attempts:
+  - (none)
+
+Fixes applied during this run (and already back-ported to the skill where appropriate):
+  1. <short description> → added to references/faq.md
+  2. ...
+
+Next actions for you:
+  - <action 1>
+```
+
+**Skill feedback loop — this is mandatory, not optional:**
+For every fix that succeeded (i.e. the YAML change made a real job pass), ask yourself:
+- Is this failure mode already documented in `references/faq.md`? If not, ADD IT with the exact
+  error string, root cause, and the working fix.
+- Is there a template (`templates/*.yml`) that produced the buggy pattern? UPDATE the template
+  so future conversions generate correct YAML on the first try.
+- Is a conversion rule in `references/conversion-rules.md` or `SKILL.md` missing or misleading?
+  UPDATE IT.
+- If a static-check plugin API changed (e.g. `gc_token` removed from `openlibing-pre-commit-action`),
+  update `references/static-check-mapping.md`.
+
+The goal is that the same failure never has to be diagnosed twice across conversions. Every
+successful fix makes the next pipeline faster to convert and more likely to pass on the first run.
 
 **Common error patterns and fixes:** See `references/faq.md` for the full, regularly-updated list of
 known errors and their fixes (API gateway errors, OBS auth, input/env mistakes, git version issues,
-openlibing configuration, git committer identity, etc.). Consult that file when diagnosing test-run
-failures rather than re-deriving fixes from scratch.
-
-After fixing an error, summarize the root cause and add it to `references/faq.md` so future conversions benefit.
+openlibing configuration, git committer identity, bad substitution, stage-name special characters,
+pre-commit plugin token deprecation, etc.). Consult that file FIRST when diagnosing test-run
+failures — if the error is already there, apply the documented fix immediately instead of
+re-deriving it.
 
 ## Reference Files
 

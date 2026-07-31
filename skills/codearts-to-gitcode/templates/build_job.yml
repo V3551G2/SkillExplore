@@ -46,15 +46,6 @@ jobs:
       image: swr.<region>.myhuaweicloud.com/<org>/${{ inputs.IMAGE_FLAG }}
       options: --user root
     steps:
-      - name: print env
-        run: |
-          echo "pr_id=${{ inputs.pr_id }}"
-          echo "IMAGE_FLAG=swr.<region>.myhuaweicloud.com/<org>/${{ inputs.IMAGE_FLAG }}"
-          echo "REMOTE_URL=${{ inputs.REMOTE_URL }}"
-          echo "TARGET_BRANCH=${{ inputs.TARGET_BRANCH }}"
-          echo "ATOMGIT_WORKSPACE=${ATOMGIT_WORKSPACE}"
-          pwd
-
       - name: clone repo
         run: |
           set -x

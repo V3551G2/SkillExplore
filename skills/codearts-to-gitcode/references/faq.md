@@ -16,6 +16,8 @@ Reference this file from SKILL.md and other references instead of duplicating er
 9. [SCA: repo not in openlibing](#sca-repo-not-in-openlibing)
 10. [Git merge: committer identity unknown](#git-merge-committer-identity-unknown)
 11. ["bad substitution" when entry workflow calls a sub-workflow](#bad-substitution-when-entry-workflow-calls-a-sub-workflow)
+12. [GitCode Actions REST API — v8 endpoints](#gitcode-actions-rest-api--v8-endpoints-updated-2026-07)
+13. [pull_request_target reads YAML from target branch, not PR branch](#pull_request_target-reads-yaml-from-target-branch-not-pr-branch)
 
 ---
 
@@ -267,3 +269,93 @@ Build_arm:
 
 See `references/conversion-rules.md` section "Sub-workflow inputs: do NOT re-pass parameters
 that already have atomgit defaults" for the full decision table.
+
+---
+
+## GitCode Actions REST API — v8 endpoints (UPDATED 2026-07)
+
+**Correct API hostname: `api.gitcode.com`** (NOT `gitcode.com` — that returns "No handler found").
+Base URL: `https://api.gitcode.com/api/v8/repos/{owner}/{repo}/actions/`.
+Auth via `PRIVATE-TOKEN` header. Include `User-Agent: Mozilla/5.0` to avoid WAF blocking.
+Official docs: https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs
+
+**Working endpoints (verified 2026-07-31):**
+```bash
+TOKEN="<gitcode_personal_access_token>"
+H=(-H "PRIVATE-TOKEN: $TOKEN" -H "Accept: application/json" -H "User-Agent: Mozilla/5.0")
+BASE="https://api.gitcode.com/api/v8"
+OWNER="<org>"; REPO="<repo>"; RUN_ID="<workflow_run_id>"; JOB_ID="<job_id>"
+
+# List recent runs
+curl -sk -L "${H[@]}" "$BASE/repos/$OWNER/$REPO/actions/runs?per_page=5"
+
+# Get run details (includes stages→jobs→steps nested)
+curl -sk -L "${H[@]}" "$BASE/repos/$OWNER/$REPO/actions/runs/$RUN_ID"
+
+# List jobs in a run
+curl -sk -L "${H[@]}" "$BASE/repos/$OWNER/$REPO/actions/runs/$RUN_ID/jobs"
+
+# Get a single job's details
+curl -sk -L "${H[@]}" "$BASE/repos/$OWNER/$REPO/actions/runs/$RUN_ID/jobs/$JOB_ID"
+
+# Step-level logs (POST, returns JSON with paginated text: has_more, start/end_offset, log)
+curl -sk -L -X POST "${H[@]}" -H "Content-Type: application/json" -d '{}' \
+     "$BASE/repos/$OWNER/$REPO/actions/runs/$RUN_ID/jobs/$JOB_ID/logs"
+
+# Download full job log as ZIP (contains per-step .log files: 0_checkout.log, 1_<step>.log, ...)
+curl -sk -L "${H[@]}" -o logs.zip \
+     "$BASE/repos/$OWNER/$REPO/actions/runs/$RUN_ID/jobs/$JOB_ID/download_log"
+unzip -o logs.zip
+tail -50 "1_<step name>.log"
+```
+
+**Key notes (differences from GitHub Actions):**
+- Run ID field is `workflow_run_id` (hex UUID, not numeric). Job ID is `id` (also hex UUID).
+- Status values are UPPERCASE: `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `CANCELLED`
+  (NOT `success`/`failure`/`in_progress`).
+- Event field uses `MR` for PR triggers and `Note` for comment triggers like `/compile`.
+- Timestamps are Unix epoch **milliseconds** (not ISO 8601 strings).
+- `download_log` returns a **ZIP file**, not plain text — it contains one `.log` file per step.
+- The **run details** endpoint (`GET .../runs/<id>`) returns nested `stages[].jobs[].steps[]`
+  in one response, which is often more convenient than calling `/jobs` separately.
+- Always use `-L` (follow redirects) with curl.
+- Re-run via `/compile` comment uses v5 (on `gitcode.com`, not `api.gitcode.com`):
+  ```bash
+  curl -X POST -H "PRIVATE-TOKEN: $TOKEN" -H "Content-Type: application/json" \
+       -d '{"body":"/compile"}' \
+       "https://gitcode.com/api/v5/repos/$OWNER/$REPO/pulls/<pr_number>/comments"
+  ```
+
+**Troubleshooting:**
+- `"No handler found for GET ..."` → you used `gitcode.com` instead of `api.gitcode.com`.
+- HTML/418 WAF page → missing User-Agent header, or use `-L`.
+- `{"error_code":404}` with valid JSON → the path is wrong (typo, or run/job ID doesn't exist).
+
+---
+
+## pull_request_target reads YAML from target branch, not PR branch
+
+**Key behavior:** When a workflow is triggered by `pull_request_target`, GitCode reads the workflow
+YAML files (the entry YAML and all `uses:` sub-workflow references) from the **target (base) branch**
+— typically the default branch (`master`/`main`). It does NOT read YAML from the PR source branch.
+
+This is a security feature: it prevents a malicious PR from modifying a workflow that runs with
+repository secrets.
+
+**Implication for the fix loop (Phase 4c):**
+- Pushing a YAML fix to the test PR branch will **NOT** cause the next `pull_request_target` run
+  to use the fixed YAML. The run will still use the old YAML from the default branch.
+- You MUST push YAML/sub-workflow fixes to the **default branch** (`master`), then re-trigger the run.
+
+**How to re-trigger after fixing YAML on default branch:**
+1. Push the fix commit to `master`.
+2. Either push an empty/trivial commit to the test PR branch, or post a `/compile` comment on the PR.
+
+**What IS read from the PR source branch:**
+- Checked-out source code (the merged PR head) — the `checkout` action checks out the merge commit.
+- Scripts inside `.gitcode/workflows/scripts/` are part of the repo checkout, so they come from the merged code.
+- Only the **workflow YAML definitions** (`.yml` files under `.gitcode/workflows/`) are read from the target branch.
+
+**How to verify during testing:** If you pushed a fix and the error message is identical to before,
+check whether you pushed the YAML to master or only to the PR branch — if the latter, the fix
+never took effect.

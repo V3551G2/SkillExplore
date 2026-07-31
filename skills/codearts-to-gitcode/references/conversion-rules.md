@@ -638,6 +638,38 @@ Replace with the `obs-upload` action:
     object-prefix: "<prefix>/${{ inputs.pr_id }}/"
 ```
 
+### obsutil cp → wget conversion (for OBS dependency downloads)
+
+Some job scripts use `obsutil cp` to download dependency tarballs from OBS (separate from
+CI-repo elimination). These are runtime dependencies the build needs (e.g., prebuilt toolchains,
+third-party packages). Convert `obsutil cp` to an equivalent `wget` from the OBS HTTP endpoint,
+which works without obsutil being installed in the container.
+
+**Pattern:**
+```
+obsutil cp obs://<bucket-name>/<path>/<file>.tar.gz  <local-path>/<file>.tar.gz
+```
+
+**Converts to:**
+```
+wget -O <local-path>/<file>.tar.gz https://<bucket-name>.obs.<region>.myhuaweicloud.com/<path>/<file>.tar.gz
+```
+
+- `<region>` defaults to `cn-north-4` but should be extracted from the pipeline URL/cookie.
+  The same region used for CodeArts API calls (extracted from cookie `cfProjectName=<region>`)
+  is the region for OBS URLs.
+- `-O` preserves the target filename (use `-c` for continue/resume if the original obsutil
+  had resume semantics).
+- If the obsutil line uses additional flags (e.g., `-f` to overwrite, `-r` for recursive),
+  add equivalent wget flags or add `rm -f` before wget for overwrite behavior.
+- For recursive downloads (`obsutil cp -r obs://bucket/path ./dir/`), use wget with
+  `--recursive` or restructure as a tarball download if the source is a single archive.
+- obsutil config lines (e.g., `obsutil config -i=... -k=...`) are typically commented out
+  or unnecessary for public-read buckets. If the bucket requires auth, the wget will need
+  signed URLs or the OBS_AK/OBS_SK secrets — but most dependency buckets in these pipelines
+  are public-read. Preserve commented obsutil config lines as-is (they are intentionally
+  disabled in the original).
+
 ### 4. "下载文件管理的文件" (module: 20061) — File Download
 
 These often download previously prepared files. In GitCode:
