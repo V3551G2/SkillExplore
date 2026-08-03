@@ -392,6 +392,15 @@ not to hand back a link and walk away. Reference: https://gitcode.com/gitcode-cl
 After the PR is created, **do NOT just hand back the link and stop**. Drive the pipeline to
 resolution using the following polling + diagnosis + fix loop.
 
+**If NO run appears at all after opening the PR or posting a comment:** This is a trigger
+problem, not a job failure. Consult `references/faq.md` #17 ("No reaction after opening a test
+PR or posting a comment"): verify the entry workflow's `on:` block declares the matching event
+(`pull_request_target`/`pull_request` for PR open/update; `pull_request_comment` for comments,
+not `issue_comment`) and correct branches/regex, confirm the YAML is on the default/target
+branch (not only the PR branch), and if all that is correct, ask the user to confirm the GitCode
+account/org is whitelisted for Actions. Do not start editing job YAML until a run is actually
+being created.
+
 **Polling:** Use `ScheduleWakeup` to wake every 60–120 seconds and re-check the pipeline status
 via the GitCode API (base URL `https://api.gitcode.com/api/v8` — **hostname is `api.gitcode.com`,
 NOT `gitcode.com`**; auth header `PRIVATE-TOKEN: <token>`). Between checks you are idle. Continue
@@ -439,7 +448,8 @@ either `success`, or `needs_human` (see below), or `known_limit` after 3 fix att
 
    | Category | Signals in log | Action |
    |---|---|---|
-   | **Needs human (static-check infra)** | `APIG.0303` / auth errors from `sca-pr-scan`, `openlibing`, `anti_poison`; "当前扫描仓库不在openlibing中"; "申请资源" stuck/pending; credential/secret "not found"; "permission denied" on external services | Mark `needs_human`. Tell user exactly which secret/registration/quota is missing, referencing the FAQ entry. Do NOT attempt YAML fixes here — these are environment issues. |
+   | **Needs human (static-check infra)** | `APIG.0303` / auth errors from `sca-pr-scan`, `openlibing`, `anti_poison`; "当前扫描仓库不在openlibing中"; credential/secret "not found"; "permission denied" on external services | Mark `needs_human`. Tell user exactly which secret/registration/quota is missing, referencing the FAQ entry. Do NOT attempt YAML fixes here — these are environment issues. |
+   | **Resource allocation ("申请资源" stuck / no runner)** | Job stuck in "申请资源"/PENDING, "no available runner", label not matched, resource allocation error | FIRST verify `runs-on` labels (x64 vs arm64, exact spelling) — a wrong label is a YAML fix. If labels are correct, see faq.md #2: check resource pool quota/capacity and whether the org is on the **dedicate-hosted** whitelist (paid, whitelisted) vs **codearts-hosted** (free, no whitelist). Temporarily switching to `codearts-hosted` (x64) distinguishes a YAML problem from a whitelist/quota problem. Whitelist/quota → `needs_human`. |
    | **Bad substitution / input errors** | `bad substitution`, `Input required and not supplied`, `unrecognized input` | 95% of the time caused by entry workflow passing atomgit-defaulted inputs in `with:` (see conversion-rules.md §"do NOT re-pass parameters that already have atomgit defaults"). Fix the entry YAML, push, re-run. |
    | **Path / file not found** | `No such file or directory`, `script not found`, `command not found` for a script you referenced | FIRST check your own conversion: is a Category A script incorrectly moved to `scripts/`? Did a step split mis-place a `cd` (CWD bug — conversion-rules.md §"CWD tracking")? If yes, fix YAML. If the path is genuinely correct but file missing, check if it's a placeholder script — user needs to populate it. |
    | **Git / checkout errors** | `git version 2.17, minimum required is 2.18`; `Committer identity unknown`; merge conflicts | Apply known fixes from faq.md (git upgrade step; `git config user.name/email`). Fix YAML, push, re-run. |

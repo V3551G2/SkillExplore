@@ -172,6 +172,10 @@ Antipoison:
       run: |
         set -ex
         pip3 install requests
+        # apig_sdk (Huawei Cloud API Gateway signing SDK) is carried in-repo
+        # under scripts/apig_sdk/ because Huawei Cloud containers cannot access
+        # PyPI/GitHub (network restricted). Add scripts/ to PYTHONPATH.
+        export PYTHONPATH="${ATOMGIT_WORKSPACE}/.gitcode/workflows/scripts:${PYTHONPATH}"
         python3 .gitcode/workflows/scripts/anti_poison.py \
           --repo ${{ env.REPO_NAME }} \
           --pr_id ${{ env.PR_ID }} \
@@ -183,10 +187,12 @@ Antipoison:
 
 **Key points**:
 - The `anti_poison.py` script must be placed in `.gitcode/workflows/scripts/` (NOT `build/`).
-- The CI repo clone (`git clone ... mindx_ci`) and ApiGateway SDK wget/unzip steps are eliminated —
-  `anti_poison.py` from the CI repo already has its own dependencies; the `pip3 install requests`
-  covers runtime needs. Adjust if the script requires `apig_sdk` specifically (in that case, also
-  carry `apig_sdk/` in `scripts/`).
+- **Carry `apig_sdk/` in-repo**: anti_poison.py imports `from apig_sdk import signer` for AK/SK
+  request signing. Place the apig_sdk Python package at `.gitcode/workflows/scripts/apig_sdk/`
+  with a correct `signer.py` (Huawei Cloud APIG HMAC-SHA256 signing). Pip install from PyPI/GitHub
+  fails in Huawei Cloud containers due to network restrictions, so carrying it in-repo is the
+  reliable approach. Use `export PYTHONPATH="${ATOMGIT_WORKSPACE}/.gitcode/workflows/scripts:${PYTHONPATH}"`
+  before running the script.
 - When generating the script file during conversion, attempt download from CI repo; create empty
   placeholder if inaccessible (private repo).
 - **Do NOT blindly add the "git upgrade" step** to every job. It is a fix for a specific failure
@@ -194,7 +200,10 @@ Antipoison:
   below for when it is actually needed.
 
 **Secrets needed**: `APPID_TASK_ANTI`, `SECRETKEY_STATUS_ANTI`, `SECRETKEY_TASK_ANTI`,
-`APPID_STATUS_ANTI` (note: `ATLAS_PASSWORD` is no longer needed since we no longer clone the CI repo at runtime)
+`APPID_STATUS_ANTI` (note: `ATLAS_PASSWORD` is no longer needed since we no longer clone the CI repo at runtime).
+If Antipoison fails with `APIG.0303: verify signature fail`, it means the APIG credentials are
+missing or incorrect in repo Settings → Secrets — this is a `needs_human` configuration issue,
+not a YAML bug.
 
 ### SAST (Static Application Security Testing / AI-Check)
 

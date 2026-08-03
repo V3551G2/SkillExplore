@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MindCluster-AscendNPUBurn · CodeArts → GitCode Actions 迁移实践案例</title>
+<style>
+  /* ---------- design tokens ---------- */
+  :root{
+    --bg:#F5F7F9; --surface:#FFFFFF; --surface-2:#EEF2F6;
+    --ink:#16202E; --muted:#566273; --rule:#D6DCE4;
+    --accent:#1C6E8C; --accent-ink:#FFFFFF; --accent-soft:#E2EDF2;
+    --code-bg:#0F1B24; --code-ink:#D7E3EC; --code-rule:#223746;
+    --ok:#1E8A55; --ok-soft:#E1F1E9;
+    --bad:#C23B2E; --bad-soft:#F8E5E2;
+    --warn:#A9791A; --warn-soft:#F7EED9;
+    --mut:#5B6675; --mut-soft:#E9EDF1;
+    --shadow:0 1px 2px rgba(16,28,40,.05),0 8px 24px rgba(16,28,40,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0D1117; --surface:#141A22; --surface-2:#1B232D;
+      --ink:#E7ECF2; --muted:#9AA6B5; --rule:#28323E;
+      --accent:#54B6D2; --accent-ink:#06141A; --accent-soft:#15303B;
+      --code-bg:#091119; --code-ink:#C9D6E1; --code-rule:#1E2F3D;
+      --ok:#44BB7E; --ok-soft:#133023;
+      --bad:#E3685A; --bad-soft:#341C19;
+      --warn:#DDB957; --warn-soft:#332914;
+      --mut:#9AA6B5; --mut-soft:#1E2630;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0D1117; --surface:#141A22; --surface-2:#1B232D;
+    --ink:#E7ECF2; --muted:#9AA6B5; --rule:#28323E;
+    --accent:#54B6D2; --accent-ink:#06141A; --accent-soft:#15303B;
+    --code-bg:#091119; --code-ink:#C9D6E1; --code-rule:#1E2F3D;
+    --ok:#44BB7E; --ok-soft:#133023;
+    --bad:#E3685A; --bad-soft:#341C19;
+    --warn:#DDB957; --warn-soft:#332914;
+    --mut:#9AA6B5; --mut-soft:#1E2630;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15.5px; line-height:1.72; -webkit-font-smoothing:antialiased;
+    font-variant-numeric:tabular-nums;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:0 28px}
+  code,pre,.mono{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,"Courier New",monospace}
+  a{color:var(--accent)}
+
+  /* ---------- header ---------- */
+  header.mast{
+    background:linear-gradient(180deg,var(--surface) 0%,var(--bg) 100%);
+    border-bottom:1px solid var(--rule);
+    padding:46px 0 34px;
+  }
+  .eyebrow{
+    text-transform:uppercase; letter-spacing:.16em; font-size:11.5px;
+    color:var(--accent); font-weight:700; margin:0 0 14px;
+  }
+  h1{
+    font-size:31px; line-height:1.22; margin:0 0 10px; font-weight:760;
+    letter-spacing:-.01em; text-wrap:balance;
+  }
+  .subtitle{color:var(--muted); font-size:16.5px; margin:0 0 22px;max-width:62ch}
+  .metabar{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+  .chip{
+    display:inline-flex;align-items:center;gap:7px;
+    background:var(--surface-2); border:1px solid var(--rule);
+    border-radius:999px; padding:5px 12px; font-size:12.5px; color:var(--muted);
+  }
+  .chip b{color:var(--ink);font-weight:600}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block}
+
+  /* pipeline svg */
+  .flowsvg{margin-top:26px;width:100%;height:auto;color:var(--ink)}
+  .flowsvg .stageband{fill:var(--surface-2);stroke:var(--rule);stroke-width:1}
+  .flowsvg .node{fill:var(--surface);stroke:var(--accent);stroke-width:1.6}
+  .flowsvg .node.muted{stroke:var(--mut)}
+  .flowsvg .arrow{stroke:var(--muted);stroke-width:1.4;fill:none}
+  .flowsvg text{fill:var(--ink);font-size:11px;font-family:inherit}
+  .flowsvg .label{fill:var(--muted);font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+
+  /* ---------- sections ---------- */
+  main{padding:36px 0 70px}
+  section{margin:0 0 46px;scroll-margin-top:20px}
+  h2{
+    font-size:21px;font-weight:720;margin:0 0 4px;letter-spacing:-.01em;
+    display:flex;align-items:baseline;gap:12px;text-wrap:balance;
+  }
+  h2 .num{
+    font-size:12.5px;color:var(--accent);font-weight:700;
+    border:1px solid var(--accent);border-radius:6px;padding:2px 8px;letter-spacing:.04em;
+  }
+  h2 + .lead{color:var(--muted);margin:0 0 18px;max-width:70ch}
+  h3{font-size:16px;font-weight:680;margin:26px 0 8px}
+  p{margin:0 0 13px}
+  ul,ol{margin:0 0 14px;padding-left:1.35em}
+  li{margin:5px 0}
+  strong{font-weight:680}
+  hr{border:none;border-top:1px solid var(--rule);margin:30px 0}
+
+  /* status pills */
+  .pill{display:inline-block;font-size:11.5px;font-weight:650;padding:2px 9px;border-radius:999px;white-space:nowrap;line-height:1.6}
+  .p-ok{background:var(--ok-soft);color:var(--ok)}
+  .p-bad{background:var(--bad-soft);color:var(--bad)}
+  .p-warn{background:var(--warn-soft);color:var(--warn)}
+  .p-mut{background:var(--mut-soft);color:var(--mut)}
+
+  /* tables */
+  .tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:var(--surface);box-shadow:var(--shadow);margin:16px 0 8px}
+  table{border-collapse:collapse;width:100%;font-size:13.8px;min-width:520px}
+  th,td{padding:10px 14px;text-align:left;vertical-align:top;border-bottom:1px solid var(--rule)}
+  th{background:var(--surface-2);font-weight:660;font-size:12.5px;color:var(--muted);letter-spacing:.02em}
+  tr:last-child td{border-bottom:none}
+  td code,.inline-code{background:var(--surface-2);border:1px solid var(--rule);border-radius:5px;padding:1px 6px;font-size:12.5px}
+  .mono-cell{font-family:"SFMono-Regular",Consolas,monospace;font-size:12.3px;color:var(--muted)}
+
+  /* code / console blocks */
+  pre.code{
+    background:var(--code-bg);color:var(--code-ink);
+    border:1px solid var(--code-rule);border-radius:10px;
+    padding:15px 17px;overflow-x:auto;font-size:12.7px;line-height:1.62;
+    box-shadow:var(--shadow);margin:14px 0;
+  }
+  pre.code .c{color:#7D93A4}      /* comment */
+  pre.code .k{color:#7FC4DC}      /* keyword/key */
+  pre.code .s{color:#B6E0A8}      /* string */
+  pre.code .e{color:#E3685A}      /* error */
+  pre.code .ok{color:#44BB7E}     /* success */
+  pre.code .w{color:#DDB957}      /* warning */
+  pre.code .prompt{color:#6FA8C4;user-select:none}
+  .filecap{font-size:12px;color:var(--muted);margin:16px 0 -6px;font-family:"SFMono-Regular",Consolas,monospace}
+
+  /* callout */
+  .callout{
+    border-left:3px solid var(--accent);background:var(--accent-soft);
+    border-radius:0 10px 10px 0;padding:12px 16px;margin:16px 0;font-size:14px;
+  }
+  .callout.warn{border-color:var(--warn);background:var(--warn-soft)}
+  .callout.big{border-color:var(--bad);background:var(--bad-soft)}
+  .callout h4{margin:0 0 5px;font-size:13.5px;letter-spacing:.02em}
+  .callout.warn h4{color:var(--warn)}
+  .callout.big h4{color:var(--bad)}
+
+  /* timeline (runs) */
+  .runs{list-style:none;margin:14px 0;padding:0;border-left:2px solid var(--rule)}
+  .runs li{position:relative;padding:0 0 18px 22px;margin:0}
+  .runs li:last-child{padding-bottom:0}
+  .runs li::before{
+    content:"";position:absolute;left:-7px;top:4px;width:12px;height:12px;border-radius:50%;
+    background:var(--surface);border:2px solid var(--mut);
+  }
+  .runs li.ok::before{border-color:var(--ok)}
+  .runs li.bad::before{border-color:var(--bad)}
+  .runs li.warn::before{border-color:var(--warn)}
+  .runs .rt{font-size:12.5px;color:var(--muted);font-family:"SFMono-Regular",Consolas,monospace}
+  .runs .rt b{color:var(--ink);font-family:inherit}
+
+  /* problem cards */
+  .prob{border:1px solid var(--rule);border-radius:12px;background:var(--surface);box-shadow:var(--shadow);margin:16px 0;overflow:hidden}
+  .prob .hd{display:flex;gap:12px;align-items:flex-start;padding:14px 18px;border-bottom:1px solid var(--rule);background:var(--surface-2)}
+  .prob .hd .n{font-size:12px;font-weight:700;color:var(--accent);border:1px solid var(--accent);border-radius:6px;padding:2px 8px;flex:0 0 auto;margin-top:1px}
+  .prob .hd h3{margin:0;font-size:15.5px}
+  .prob .bd{padding:6px 18px 16px}
+  .prob .tag{font-size:11px;font-weight:650;padding:2px 8px;border-radius:999px}
+  .tag.fix{background:var(--ok-soft);color:var(--ok)}
+  .tag.human{background:var(--warn-soft);color:var(--warn)}
+  .tag.transient{background:var(--mut-soft);color:var(--mut)}
+  .tag.known{background:var(--bad-soft);color:var(--bad)}
+  .dl{display:grid;grid-template-columns:92px 1fr;gap:4px 14px;margin:12px 0;font-size:13.8px}
+  .dl dt{color:var(--muted);font-weight:600}
+  .dl dd{margin:0}
+
+  /* interaction log */
+  .conv{border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:var(--shadow);margin:14px 0}
+  .conv .msg{display:grid;grid-template-columns:64px 1fr;gap:14px;padding:14px 18px;border-bottom:1px solid var(--rule)}
+  .conv .msg:last-child{border-bottom:none}
+  .conv .who{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding-top:2px}
+  .conv .who.u{color:var(--accent)}
+  .conv .who.a{color:var(--mut)}
+  .conv .txt{font-size:14px}
+  .conv .txt p{margin:0 0 6px}
+  .conv .txt p:last-child{margin:0}
+
+  /* two col */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:680px){.grid2{grid-template-columns:1fr}}
+
+  footer{border-top:1px solid var(--rule);padding:26px 0;color:var(--muted);font-size:12.5px}
+  .theme-toggle{position:fixed;right:18px;bottom:18px;z-index:50;background:var(--surface);color:var(--ink);
+    border:1px solid var(--rule);border-radius:999px;padding:8px 14px;font-size:12.5px;cursor:pointer;box-shadow:var(--shadow)}
+  .theme-toggle:hover{border-color:var(--accent);color:var(--accent)}
+  ::selection{background:var(--accent-soft)}
+</style>
+</head>
+<body>
+
+<header class="mast">
+  <div class="wrap">
+    <p class="eyebrow">CodeArts → GitCode Actions · 迁移实践案例</p>
+    <h1>把一条华为云 CodeArts PR 流水线<br>迁到 GitCode Actions 并跑通闭环</h1>
+    <p class="subtitle">以 <strong>MindCluster-AscendNPUBurn</strong> 为例：从 REST 抓取、九级作业分类、YAML 改写，到 fork 仓库里发 <code>/compile</code>、按日志逐轮修复直至全部作业转绿的完整过程记录。</p>
+    <div class="metabar">
+      <span class="chip"><span class="dot"></span>流水线 <b>PR-pipeline_MindCluster-AscendNPUBurn</b></span>
+      <span class="chip">源仓库 <b>Ascend/MindCluster-AscendNPUBurn</b></span>
+      <span class="chip">测试仓 <b>ComputingActionTest/MindCluster-AscendNPUBurn</b></span>
+      <span class="chip">PR <b>#1 · master_test → master</b></span>
+      <span class="chip">日期 <b>2026-08-11 → 08-12</b></span>
+      <span class="chip">结果 <b>9/10 作业通过，PreSmoke 为硬件级 known-limit</b></span>
+    </div>
+
+    <!-- pipeline flow diagram -->
+    <svg class="flowsvg" viewBox="0 0 820 150" role="img" aria-label="迁移后的流水线结构">
+      <rect class="stageband" x="10"  y="14" width="150" height="122" rx="8"/>
+      <text class="label" x="24" y="32">stage_0</text>
+      <rect class="node" x="28" y="60" width="114" height="34" rx="6"/>
+      <text x="85" y="81" text-anchor="middle">Detect_file_changes</text>
+
+      <rect class="stageband" x="180" y="14" width="440" height="122" rx="8"/>
+      <text class="label" x="194" y="32">stage_1 · CodeCheck_Build_Test</text>
+      <!-- row 1 -->
+      <rect class="node" x="196" y="46" width="86" height="30" rx="6"/><text x="239" y="65" text-anchor="middle">SCA</text>
+      <rect class="node" x="290" y="46" width="92" height="30" rx="6"/><text x="336" y="65" text-anchor="middle">pre_commit</text>
+      <rect class="node" x="390" y="46" width="92" height="30" rx="6"/><text x="436" y="65" text-anchor="middle">Antipoison</text>
+      <rect class="node" x="490" y="46" width="114" height="30" rx="6"/><text x="547" y="65" text-anchor="middle">SAST</text>
+      <!-- row 2 -->
+      <rect class="node" x="196" y="90" width="92" height="30" rx="6"/><text x="242" y="109" text-anchor="middle">Build_x86</text>
+      <rect class="node" x="296" y="90" width="92" height="30" rx="6"/><text x="342" y="109" text-anchor="middle">Build_arm</text>
+      <rect class="node" x="396" y="90" width="92" height="30" rx="6"/><text x="442" y="109" text-anchor="middle">UT_Python</text>
+      <rect class="node muted" x="500" y="90" width="104" height="30" rx="6" stroke-dasharray="4 3"/><text x="552" y="109" text-anchor="middle">(clone_repo 已消除)</text>
+
+      <rect class="stageband" x="640" y="14" width="170" height="122" rx="8"/>
+      <text class="label" x="654" y="32">stage_2 · Test（修复项）</text>
+      <rect class="node" x="660" y="60" width="130" height="34" rx="6"/>
+      <text x="725" y="81" text-anchor="middle">PreSmoke</text>
+
+      <path class="arrow" d="M160 75 L180 75"/>
+      <path class="arrow" d="M620 75 L640 75"/>
+    </svg>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ 0. 概览 ============ -->
+  <section id="overview">
+    <h2><span class="num">概览</span>最终结果一览</h2>
+    <p class="lead">闭环验证在测试组织 <code class="inline-code">ComputingActionTest</code> 下完成：fork 仓库、推送 YAML、以 PR 评论 <code class="inline-code">/compile</code> 触发、对照逐作业日志诊断并推了 4 次修复到目标分支。下表为 secret 配齐、SCA 仓库登记完成后的最终状态。</p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>作业</th><th>来源（CodeArts）</th><th>转换方式</th><th>最终状态</th></tr></thead>
+        <tbody>
+          <tr><td>Detect_file_changes</td><td class="mono-cell">md_check</td><td>paths-changes-filter，输出 need_build</td><td><span class="pill p-ok">通过</span></td></tr>
+          <tr><td>SCA</td><td class="mono-cell">SCA 组件分析</td><td>sca-pr-scan 插件</td><td><span class="pill p-ok">通过</span> <span class="pill p-mut">需 openlibing 登记</span></td></tr>
+          <tr><td>pre_commit</td><td class="mono-cell">pre-commit 钩子</td><td>openlibing-pre-commit-action</td><td><span class="pill p-ok">通过</span></td></tr>
+          <tr><td>Antipoison</td><td class="mono-cell">反毒扫描</td><td>容器 + in-repo anti_poison.py</td><td><span class="pill p-ok">通过</span> <span class="pill p-mut">4 个密钥</span></td></tr>
+          <tr><td>SAST</td><td class="mono-cell">静态安全扫描</td><td>容器 + TuBee/AI-Check check.sh</td><td><span class="pill p-ok">通过</span></td></tr>
+          <tr><td>Build_x86</td><td class="mono-cell">x86 编译</td><td>.build_job.yml 子工作流 + obs-upload</td><td><span class="pill p-ok">wheel 已构建并上传 OBS</span></td></tr>
+          <tr><td>Build_arm</td><td class="mono-cell">arm 编译</td><td>.build_job.yml 子工作流 + obs-upload</td><td><span class="pill p-ok">wheel 已构建并上传 OBS</span></td></tr>
+          <tr><td>UT_Python</td><td class="mono-cell">Python 单测</td><td>.ut_python.yml 子工作流</td><td><span class="pill p-ok">通过</span></td></tr>
+          <tr><td>PreSmoke / JOB_smoke</td><td class="mono-cell">冒烟部署测试</td><td>.presmoke.yml 子工作流（arm64 NPU）</td><td><span class="pill p-warn">known-limit</span> <span class="pill p-mut">需 NPU 卡</span></td></tr>
+          <tr><td>（已消除）</td><td class="mono-cell">clone_repo / CI 仓下载</td><td>脚本迁入 .gitcode/workflows/scripts/，整作业删除</td><td><span class="pill p-mut">不生成</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>一句话结论：</strong>转换链路（触发器、PR 合并引用检出、子工作流调用、need_build 门控、编译产物上传）全部验证通过。PreSmoke 因依赖实体 NPU 加速卡属于环境级 known-limit，并非转换缺陷；另发现一处真实缺陷——PreSmoke 与 Build_arm 同 stage 并行导致抢跑——已定位修复方案（拆为 stage_2）。
+    </div>
+  </section>
+
+  <!-- ============ 1. 处理流程 ============ -->
+  <section id="process">
+    <h2><span class="num">01</span>处理流程：四个阶段</h2>
+    <p class="lead">技能规定的标准动线是「抓取 → 转换 → 产物校验 → 闭环验证」，前三个阶段在本地完成，第四个阶段在测试组织里真跑真修。</p>
+
+    <h3>阶段一 · 通过 CodeArts REST API 抓取配置</h3>
+    <p>从流水线 URL 解析出 <code class="inline-code">project_id=609138a9…</code>、<code class="inline-code">pipeline_id=1b4df40d…</code>、region 与 cftk，再调内部接口拿到 <code class="inline-code">definition</code>（stage/job/step 的 JSON）和 variables。关键动作是<strong>在三个层级过滤掉禁用项</strong>：</p>
+    <ul>
+      <li>作业的 <code class="inline-code">strategy.select_strategy == "never"</code> → 整作业跳过；</li>
+      <li>流水线 step <code class="inline-code">enable: false</code> → 跳过该 step；</li>
+      <li>作业配置 step <code class="inline-code">enable == false</code> → 跳过该 step。</li>
+    </ul>
+    <p>只对启用的 <code class="inline-code">official_devcloud_cloudBuild</code> 步骤去拉 <code class="inline-code">/codeci/v1/job/&lt;job_id&gt;/config</code>，避免对废弃作业做无用功。随后识别出<strong>统一资源池</strong>特征——<code class="inline-code">执行shell(20017) → 下载kubeconfig(20061) → SWR karmada(20028)</code> 三连，其中后两步是 CodeArts 基础设施，直接丢弃，从 20017 的 heredoc 里抽出真正的脚本，以 <code class="inline-code">CP_docker_image</code> 作为容器镜像，<code class="inline-code">CP_runs_on</code> 映射架构（amd64→x64，arm64*→arm64）。</p>
+
+    <h3>阶段二 · 作业分类与 YAML 转换</h3>
+    <p>把 9 个启用作业逐一归类，决定每种的转换范式。这是整个转换中决策最密集的一步：</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>CodeArts 作业</th><th>归类</th><th>GitCode 落地形态</th></tr></thead>
+        <tbody>
+          <tr><td class="mono-cell">clone_repo（CI 仓 + OBS 上传）</td><td>Case 2 消除</td><td>整作业删除；CI 脚本迁入 <code class="inline-code">scripts/</code></td></tr>
+          <tr><td class="mono-cell">md_check</td><td>文档变更检测</td><td>Detect_file_changes + paths-changes-filter，need_build 门控</td></tr>
+          <tr><td class="mono-cell">SCA</td><td>有插件</td><td><code class="inline-code">sca-pr-scan</code>（禁止降级成容器+脚本）</td></tr>
+          <tr><td class="mono-cell">pre-commit</td><td>有插件</td><td><code class="inline-code">openlibing-pre-commit-action</code>（不传 gc_token）</td></tr>
+          <tr><td class="mono-cell">Antipoison</td><td>无插件</td><td>容器 + in-repo <code class="inline-code">anti_poison.py</code>（含 apig_sdk）</td></tr>
+          <tr><td class="mono-cell">SAST</td><td>无插件</td><td>容器 + <code class="inline-code">git clone TuBee/AI-Check &amp;&amp; bash check.sh</code></td></tr>
+          <tr><td class="mono-cell">Build_x86 / Build_arm</td><td>编译</td><td>可复用 <code class="inline-code">.build_job.yml</code>（编译 + obs-upload）</td></tr>
+          <tr><td class="mono-cell">UT_Python</td><td>单测</td><td>可复用 <code class="inline-code">.ut_python.yml</code></td></tr>
+          <tr><td class="mono-cell">PreSmoke</td><td>冒烟</td><td>可复用 <code class="inline-code">.presmoke.yml</code>（下载 arm 产物→装 wheel→跑 run_st.sh）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>转换中坚持的几条硬规则：PR 流水线只挂 <code class="inline-code">pull_request_comment</code>（评论 <code class="inline-code">^(?:\/)?compile*</code>）+ <code class="inline-code">workflow_dispatch</code>，<strong>不</strong>加 <code class="inline-code">pull_request_target</code>；stage 名用 <code class="inline-code">_</code> 不能用 <code class="inline-code">&amp;</code>；镜像名写成 <code class="inline-code">env:</code> 字面量；子工作流调用只传 <code class="inline-code">required:true</code> 的输入（IMAGE_FLAG、runs_on_arch），由子工作流自己取 atomgit 默认值——重复传 REMOTE_URL/pr_id/TARGET_BRANCH 会触发 "bad substitution"。</p>
+
+    <h3>阶段三 · 产物落盘与静态校验</h3>
+    <p>在 <code class="inline-code">.gitcode/workflows/</code> 下生成 4 个 YAML（入口 + 3 个子工作流）和 <code class="inline-code">scripts/</code>（<code class="inline-code">anti_poison.py</code> 及真实的华为 <code class="inline-code">apig_sdk/</code>，用带 <code class="inline-code">PRIVATE-TOKEN</code> 的鉴权下载拿到真实内容，而非占位空文件）。同时放 <code class="inline-code">.gitattributes</code> 强制 <code class="inline-code">*.yml/*.sh/*.py</code> 走 LF——Windows 上 <code class="inline-code">core.autocrlf=true</code> 曾把脚本转成 CRLF，会导致容器里 <code>bash\r</code> 报错，提交后用 <code class="inline-code">git cat-file</code> 校验 blob 内无 CR。</p>
+    <div class="filecap">D:\ActionTest\output\workflows\</div>
+<pre class="code">.gitcode/workflows/
+├── PR-pipeline_full.yml      <span class="c"># 入口：触发器 + env + 两个 stage</span>
+├── .build_job.yml            <span class="c"># 编译 + obs-upload（OBS_AK/OBS_SK）</span>
+├── .ut_python.yml            <span class="c"># clone+merge PR → run_test.sh</span>
+├── .presmoke.yml             <span class="c"># 下载 arm 产物 → conda → run_st.sh</span>
+└── scripts/
+    ├── anti_poison.py        <span class="c"># 真实脚本，argparse + APIG 签名</span>
+    └── apig_sdk/             <span class="c"># signer / sm3_hash …</span></pre>
+
+    <h3>阶段四 · 闭环验证（核心阶段）</h3>
+    <p>把产物推到 fork <code class="inline-code">ComputingActionTest/MindCluster-AscendNPUBurn</code> 的 master，建测试 PR #1，用户开启「PR 预合并 / Actions」后，用 v5 接口发评论 <code class="inline-code">/compile</code> 触发；通过 v8（<code class="inline-code">api.gitcode.com</code>，注意不是 gitcode.com）轮询 runs/jobs，<code class="inline-code">download_log</code> 拿到的是 302→ZIP 的逐步骤 <code class="inline-code">.log</code>。每轮失败都下日志、定位根因、把 <strong>YAML 修复推到目标分支 master</strong>（评论触发器读的是目标分支上的 YAML），脚本修复则在 PR 分支生效。整个修复设了上限：最多 3 次 YAML 修复，超出后剩余失败归为 needs_human / known_limit。</p>
+  </section>
+
+  <!-- ============ 2. 交互过程 ============ -->
+  <section id="interaction">
+    <h2><span class="num">02</span>交互过程：人和技能怎么配合</h2>
+    <p class="lead">这次闭环不是全自动跑完的——有若干关键节点需要人做决策或配置，技能负责把"人需要做什么、为什么"讲清楚，人做完再交回给技能继续。</p>
+
+    <div class="conv">
+      <div class="msg"><div class="who u">用户</div><div class="txt"><p>「我开启了 PR 预合并，启用了 Actions，你先触发一次吧，我明天再设置私密参数。」</p></div></div>
+      <div class="msg"><div class="who a">技能侧</div><div class="txt"><p>理解为：<strong>无 secret 先跑一轮验证转换链路</strong>。于是立即发 /compile，预期 secret 相关作业会红，重点验证触发器、检出、子工作流调用、need_build 门控这些"接线"是否正确。这一轮 4 个非 secret 作业全绿，5 个红作业全部精确地失败在 secret 边界（401/403），证明接线无误。</p></div></div>
+
+      <div class="msg"><div class="who u">用户</div><div class="txt"><p>「请查看并修复，checkout 插件问题有 faq 吧」</p></div></div>
+      <div class="msg"><div class="who a">技能侧</div><div class="txt"><p>回到 FAQ #7 核对镜像清单，发现自己给 <code class="inline-code">mindspore_python3.11:v0.1</code>（Debian trixie，自带 git 2.47.3）<strong>误加</strong>了 git 升级步骤——之前那个"portable 版本判断块"其实是在掩盖一个自找的 apt 报错。正确修复是<strong>直接删掉该步骤</strong>，而不是继续打补丁。</p></div></div>
+
+      <div class="msg"><div class="who u">用户</div><div class="txt"><p>「我已经设置了私钥，请重新开始验证-修复」</p></div></div>
+      <div class="msg"><div class="who a">技能侧</div><div class="txt"><p>配齐 8 个 secret 后重新触发。这一轮 x86/arm 编译双双产出 wheel 并上传 OBS，pre_commit/SAST/UT 保持全绿。期间用户在页面手动<strong>重试了卡在 QUEUED 的作业</strong>（专用 runner 调度慢），技能通过 start_time/状态判断出这是资源调度而非代码问题。</p></div></div>
+
+      <div class="msg"><div class="who u">用户</div><div class="txt"><p>「针对 SCA 的报错，我已经在 openlibing 的 MindCluster 组织下录入了该仓库」</p></div></div>
+      <div class="msg"><div class="who a">技能侧</div><div class="txt"><p>SCA 报 <code class="inline-code">code 41003 / repoUrl is null</code>，是平台侧仓库登记问题（插件上报的是测试 fork 的 URL），不属于转换缺陷。用户登记后该项解除。</p></div></div>
+
+      <div class="msg"><div class="who u">用户</div><div class="txt"><p>「我看除了 PreSmoke 任务（需要卡）外其他任务基本上成功了……可以停止了」</p></div></div>
+      <div class="msg"><div class="who a">技能侧</div><div class="txt"><p>确认 PreSmoke 的 NPU 卡依赖是环境级 known-limit 后<strong>立即停止后台轮询</strong>，不再推送未经确认的改动；已定位的 PreSmoke 并行竞态修复（拆 stage_2）作为待办说明，交由用户决定是否继续。</p></div></div>
+    </div>
+
+    <h3>逐次运行记录</h3>
+    <ul class="runs">
+      <li class="bad"><span class="rt"><b>早期迭代（6937ed8d / 646c1342 / b5e916bc）</b> · Detect/pre_commit/SAST 因 git 版本与包管理问题接连失败</span><p style="margin:6px 0 0;font-size:13.5px">对应 fix#1（加 git 升级）→ fix#2（Debian 无 software-properties 的兜底）→ fix#3（gitleaks 装到工作区根）。</p></li>
+      <li class="ok"><span class="rt"><b>ef34e887</b> · 4 个非 secret 作业全绿，5 个红作业均失败在 secret 边界</span><p style="margin:6px 0 0;font-size:13.5px">无 secret 条件下的接线验证，确认转换正确。</p></li>
+      <li class="ok"><span class="rt"><b>5a4cf87b（run #5）</b> · 删除 pre_commit 误加的 git 升级步骤后仍全绿</span><p style="margin:6px 0 0;font-size:13.5px">用镜像自带 git 2.47.3 检出通过，省掉约 60s apt 时间（commit 4be7896）。</p></li>
+      <li class="warn"><span class="rt"><b>b0b6f8b5（run #6）</b> · Detect 卡在 QUEUED 后因 GPG key 超时失败</span><p style="margin:6px 0 0;font-size:13.5px">专用 runner 调度延迟 + <code class="inline-code">add-apt-repository</code> 拉 GPG key 网络抖动，用户在页面重试救活 runner。</p></li>
+      <li class="ok"><span class="rt"><b>e2503e4a（run #7）</b> · secret 配齐后双架构编译产物上传 OBS 成功；PreSmoke 暴露并行竞态</span><p style="margin:6px 0 0;font-size:13.5px">SCA 经 openlibing 登记后通过；PreSmoke 抢跑导致 arm 产物 404，定位为 stage 并行问题。</p></li>
+    </ul>
+
+    <div class="callout">
+      <strong>凭证处理的安全约定：</strong>全程不要求用户在对话里粘贴明文 token，而是用 <code class="inline-code">gitcode auth token</code> 解析；<code class="inline-code">gitcode auth status --json</code> 显示 logged_in/token_valid 即视为凭证已提供。带 token 的命令一律 <code class="inline-code">set +x</code>，日志/提交信息/总结里只用 <code class="inline-code">$TOKEN</code> 指代。
+    </div>
+  </section>
+
+  <!-- ============ 3. 问题与修复 ============ -->
+  <section id="issues">
+    <h2><span class="num">03</span>遇到的问题与修复</h2>
+    <p class="lead">下面按"真实代码缺陷 → 环境/平台问题 → 自我纠错"分组。每个问题给出错误现象、根因和最终修法——包括一次走了弯路又退回正轨的过程。</p>
+
+    <!-- problem 1 -->
+    <div class="prob">
+      <div class="hd"><span class="n">P1</span><h3>checkout 报 git 版本过低</h3><span class="tag fix">YAML 修复</span></div>
+      <div class="bd">
+        <dl class="dl">
+          <dt>现象</dt><dd><pre class="code"><span class="e">要求的最低git版本是 2.18, 当前git ('/usr/bin/git') 版本为 2.17.1</span></pre></dd>
+          <dt>根因</dt><dd><code class="inline-code">demo_mindx:mindxdl_20230912_1</code> 与 <code class="inline-code">mindx_x86:mindxdl_go1207_20251203</code> 基于 Ubuntu bionic，自带 git 2.17.1，低于 checkout 动作要求的 2.18。</dd>
+          <dt>修复</dt><dd>在这些<strong>已知旧 git 镜像</strong>的 checkout 之前加 git 升级步骤（apt → PPA → 安装）。Detect、Antipoison、SAST 三个作业需要。</dd>
+        </dl>
+<pre class="code"><span class="k">- name:</span> git upgrade
+  <span class="k">run:</span> |
+    apt-get update
+    apt-get install -y software-properties-common
+    add-apt-repository -y ppa:git-core/ppa
+    apt-get update
+    apt-get install -y git
+    git --version</pre>
+      </div>
+    </div>
+
+    <!-- problem 2 (the wrong turn) -->
+    <div class="prob">
+      <div class="hd"><span class="n">P2</span><h3>把 git 升级误加到 mindspore 镜像（一次弯路）</h3><span class="tag fix">已纠正</span></div>
+      <div class="bd">
+        <dl class="dl">
+          <dt>现象</dt><dd>pre_commit 报 <code class="inline-code">E: Unable to locate package software-properties-common</code>（exit 100）。</dd>
+          <dt>根因</dt><dd>fix#1 给 <code class="inline-code">mindspore_python3.11:v0.1</code> 也加了升级步骤，但该镜像是 Debian trixie，没有 PPA 支持；<strong>而它自带 git 2.47.3 根本不需要升级</strong>。fix#2 写的"portable 版本判断块"只是在掩盖这个自找的错误。</dd>
+          <dt>修复</dt><dd>对照 FAQ #7 的镜像清单，<strong>直接删除</strong> pre_commit 的 git 升级步骤。这是用户点名"checkout 插件问题有 faq 吧"后回到 FAQ 才发现的——FAQ 早已明确 mindspore 镜像不应加该步骤。教训：先查 FAQ，按镜像条件化加步骤，不要用兜底逻辑去救一个本不该存在的步骤。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- problem 3 -->
+    <div class="prob">
+      <div class="hd"><span class="n">P3</span><h3>pre-commit 的 gitleaks 钩子找不到可执行文件</h3><span class="tag fix">YAML 修复</span></div>
+      <div class="bd">
+        <dl class="dl">
+          <dt>现象</dt><dd><pre class="code"><span class="e">Executable './gitleaks' not found</span>  (hook id: gitleaks-offline-scan, exit 1)</pre></dd>
+          <dt>根因</dt><dd>钩子在仓库根目录执行 <code class="inline-code">./gitleaks</code>，但最初把二进制装到了 <code class="inline-code">/usr/local/bin</code>。</dd>
+          <dt>修复</dt><dd>把二进制下到工作区根目录并赋可执行权限：</dd>
+        </dl>
+<pre class="code"><span class="k">- name:</span> gitleaks install
+  <span class="k">run:</span> |
+    wget -q --no-host-directories -c --no-check-certificate \
+      https://pytorch-package.obs.cn-north-4.myhuaweicloud.com/pta-codecheck/gitleaks
+    chmod +x gitleaks</pre>
+      </div>
+    </div>
+
+    <!-- problem 4 -->
+    <div class="prob">
+      <div class="hd"><span class="n">P4</span><h3>Detect 因拉 GPG key 超时而失败</h3><span class="tag transient">瞬时/重试</span></div>
+      <div class="bd">
+        <dl class="dl">
+          <dt>现象</dt><dd>git 升级步骤里 <code class="inline-code">add-apt-repository</code> 报 <code class="inline-code">Error: retrieving gpg key timed out</code>，Detect 失败导致整轮 stage_1 没启动。</dd>
+          <dt>根因</dt><dd>keyserver 网络抖动——<strong>完全相同的步骤在前几轮都成功</strong>，属偶发。</dd>
+          <dt>处理</dt><dd>重新发 /compile，下一轮 gpg key 拉取成功，Detect COMPLETED。未改代码。若反复出现可考虑给 add-apt-repository 加重试/多 keyserver 兜底，但单次抖动不值得动 YAML。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- problem 5 -->
+    <div class="prob">
+      <div class="hd"><span class="n">P5</span><h3>专用 runner 长时间停在 QUEUED</h3><span class="tag transient">资源调度</span></div>
+      <div class="bd">
+        <dl class="dl">
+          <dt>现象</dt><dd>run #6 中 Detect <code class="inline-code">status=QUEUED / start_time=null</code> 持续近 5 分钟，页面点重试后才分配到 runner。</dd>
+          <dt>根因</dt><dd><code class="inline-code">[dedicate-hosted, x64, 2xlarge]</code> 专用宿主机调度延迟，非代码/YAML 问题。</dd>
+          <dt>处理</dt><dd>通过 <code class="inline-code">start_time</code> 是否为空区分"作业没开始"与"作业执行失败"，避免误判为转换缺陷；用户在页面重试解决。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- problem 6 -->
+    <div class="prob">
+      <div class="hd"><span class="n">P6</span><h3>SCA 返回 repoUrl is null</h3><span class="tag human">平台配置</span></div>
+      <div class="bd">
+        <dl class="dl">
+          <dt>现象</dt><dd><pre class="code">响应状态码: 200
+{<span class="e">"code":41003,"message":"repoUrl is null"</span>,
+ "data":"当前扫描仓库不在openlibing中，请前往openlibing进行配置…"}</pre></dd>
+          <dt>根因</dt><dd>插件上报的是测试 fork 的完整 URL <code class="inline-code">https://gitcode.com/ComputingActionTest/MindCluster-AscendNPUBurn</code>，SCA 后端在 openlibing 查不到该 repo（登记的是源仓库或名称不匹配）。</dd>
+          <dt>处理</dt><dd>用户在 openlibing 的 MindCluster 组织下录入测试 fork 后通过。这是平台侧登记，非转换缺陷。</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- problem 7 PreSmoke race -->
+    <div class="prob">
+      <div class="hd"><span class="n">P7</span><h3>PreSmoke 与 Build_arm 并行导致产物 404</h3><span class="tag known">真实缺陷 · 待落地</span></div>
+      <div class="bd">
+        <dl class="dl">
+          <dt>现象</dt><dd>JOB_smoke 在 <strong>03:17:15</strong> wget <code class="inline-code">artifacts_aarch64.zip</code> 返回 404；而 arm 编译在 <strong>03:19:24</strong> 才把同名产物上传到 OBS。</dd>
+          <dt>根因</dt><dd>PreSmoke 与 Build_arm 同处 stage_1，<strong>同 stage 内作业默认并行</strong>，PreSmoke 没等产物就位就起跑。产物本身构建/上传都成功（OBS 报告 0.16s 上传成功），纯粹是时序竞态。</dd>
+          <dt>修复方案</dt><dd>把 PreSmoke 拆到独立的 <code class="inline-code">stage_2</code>（name <code class="inline-code">Test</code>），利用"stage 间串行"保证它在 Build_arm 之后执行。用户喊停前<strong>尚未推送</strong>，作为明确待办。</dd>
+        </dl>
+<pre class="code"><span class="c"># 修复前：PreSmoke 与 Build_arm 同在 stage_1，并行抢跑</span>
+<span class="k">stages:</span>
+  <span class="k">stage_1:</span>
+    <span class="k">jobs:</span>
+      <span class="k">Build_arm:</span> { <span class="k">uses:</span> .build_job.yml, ... }
+      <span class="e">PreSmoke:</span> { <span class="k">uses:</span> .presmoke.yml, ... }   <span class="c"># ← 同时起跑，404</span>
+
+<span class="c"># 修复后：PreSmoke 移到独立 stage_2，天然等 stage_1 全完成</span>
+<span class="k">stages:</span>
+  <span class="k">stage_1:</span> { <span class="k">jobs:</span> { SCA, pre_commit, Antipoison, SAST, Build_x86, Build_arm, UT_Python } }
+  <span class="ok">stage_2:</span>
+    <span class="k">name:</span> Test
+    <span class="k">jobs:</span>
+      <span class="k">PreSmoke:</span>
+        <span class="k">if:</span> ${{ jobs.Detect_file_changes.outputs.need_build == 'yes' }}
+        <span class="k">uses:</span> .gitcode/workflows/.presmoke.yml
+        ...</pre>
+        <div class="callout warn"><h4>仍需注意</h4>PreSmoke 本身要在 arm64 + NPU 加速卡的 runner 上跑（装 ascend_npu_burn wheel、source cann-A2、跑 run_st.sh），属于环境级 known-limit。stage_2 修复解决的是"抢跑 404"，让它在有卡的环境里能真正走到 smoke 逻辑。</div>
+      </div>
+    </div>
+
+    <!-- problem 8 tooling self correction -->
+    <div class="prob">
+      <div class="hd"><span class="n">P8</span><h3>轮询脚本与 Windows 路径的自我纠错</h3><span class="tag transient">工具链</span></div>
+      <div class="bd">
+        <ul>
+          <li>v8 列表接口字段是 <code class="inline-code">workflow_runs</code> 不是 <code class="inline-code">runs</code>，第一次后台监控因此误报"无新 run"——改为正确字段后正常。</li>
+          <li>状态终态是大写 <code class="inline-code">FAILED/COMPLETED</code>，监控脚本的 case 没匹配大写，漏掉了结束信号——补齐大小写匹配。</li>
+          <li>Windows Git Bash 下 <code class="inline-code">/tmp/...</code> 与 <code class="inline-code">/d/...</code> 在 curl 与 Node 间解析不一致，Node 找不到模块；改为 curl 直接管道给 Node stdin，并用 <code class="inline-code">D:/ActionTest/.yamllint</code> 风格的 Windows 绝对路径。</li>
+          <li>CRLF：靠 <code class="inline-code">.gitattributes</code> + <code class="inline-code">git cat-file -p HEAD:&lt;path&gt; | grep -c $'\r'</code> 验证 blob 干净（应为 0）。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 4. 可复用经验 ============ -->
+  <section id="learnings">
+    <h2><span class="num">04</span>可复用经验与待办</h2>
+    <p class="lead">下面是这次实践沉淀出的、可反哺到技能参考文档的候选条目。按约定，<strong>未经确认不会改动技能文件</strong>。</p>
+
+    <div class="grid2">
+      <div>
+        <h3>建议补入技能/FAQ 的经验</h3>
+        <ul>
+          <li><strong>git 升级必须按镜像条件化</strong>，严格照 FAQ #7 的清单加。mindspore 等较新镜像自带合格 git，加了反而在 Debian trixie 上因 <code class="inline-code">software-properties-common</code> 缺失而失败。</li>
+          <li><strong>gitleaks 要装在工作区根目录</strong>：openlibing-pre-commit-action 的钩子执行 <code class="inline-code">./gitleaks</code>，不是从 PATH 找。</li>
+          <li><strong>下载产物的后续作业必须排在独立 stage</strong>（PreSmoke → stage_2），因为同 stage 并行会抢跑。这是一条通用的"构建→部署"顺序规则。</li>
+          <li><strong>无 secret 干跑的判读标准</strong>：obs-upload 403、SCA/Antipoison 401 且编译本身成功 = 接线正确；PreSmoke 的 404 是缺产物的级联，不算独立缺陷。</li>
+          <li><strong>区分 QUEUED 与 FAILED</strong>：<code class="inline-code">start_time</code> 为空是资源调度问题，不要当成代码错误去修。</li>
+          <li>v8 API 的两个易错点：列表字段 <code class="inline-code">workflow_runs</code>、终态大写。</li>
+        </ul>
+      </div>
+      <div>
+        <h3>明确的遗留待办</h3>
+        <ul>
+          <li><strong>PreSmoke stage_2 修复</strong>：方案已在 P7 给出，等你确认后推 master 再发一轮 /compile 验证（需要可用的 arm64+NPU runner）。</li>
+          <li>8 个 secret 已配齐：OBS_AK/SK、SCAN_ACCESS_KEY/SECRET_KEY、四个 *_ANTI；ACCESS_QK 经验证为可选（SAST 用公开仓 TuBee/AI-Check，不需要）。</li>
+          <li>SCA 需保证 openlibing 登记的是<strong>实际被扫描的仓库 URL</strong>（含测试 fork）。</li>
+          <li>gpg key 超时若频繁复现，再考虑给 git 升级步骤加重试兜底。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout big">
+      <h4>关于改技能文件</h4>
+      <p style="margin:0">本次没有编辑任何技能文件。是否把上述"git 升级条件化 / gitleaks 工作区 / PreSmoke 独立 stage"等条目补进 <code class="inline-code">conversion-rules.md</code>、<code class="inline-code">static-check-mapping.md</code> 或 FAQ，等你确认后再动手。</p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p style="margin:0 0 6px"><strong>MindCluster-AscendNPUBurn 迁移实践案例</strong> · 由 codearts-to-gitcode 技能闭环生成</p>
+    <p style="margin:0">测试组织：ComputingActionTest · 测试 PR #1 · 运行：ef34e887 → 5a4cf87b → b0b6f8b5 → e2503e4a · 修复提交：47ce80e / a90600c / f137047 / 4be7896。本页不含任何凭证明文。</p>
+  </div>
+</footer>
+
+<button class="theme-toggle" id="themeToggle" aria-label="切换主题">切换主题</button>
+<script>
+  (function(){
+    var b=document.documentElement,btn=document.getElementById('themeToggle');
+    function cur(){return b.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}
+    btn.addEventListener('click',function(){b.setAttribute('data-theme',cur()==='dark'?'light':'dark')});
+  })();
+</script>
+</body>
+</html>
