@@ -18,6 +18,10 @@ Reference this file from SKILL.md and other references instead of duplicating er
 11. ["bad substitution" when entry workflow calls a sub-workflow](#bad-substitution-when-entry-workflow-calls-a-sub-workflow)
 12. [GitCode Actions REST API — v8 endpoints](#gitcode-actions-rest-api--v8-endpoints-updated-2026-07)
 13. [pull_request_target reads YAML from target branch, not PR branch](#pull_request_target-reads-yaml-from-target-branch-not-pr-branch)
+14. [Antipoison: No module named 'apig_sdk'](#antipoison-no-module-named-apig_sdk)
+15. [pre-commit: Executable './gitleaks' not found](#pre-commit-executable-gitleaks-not-found)
+16. [SAST: git version 2.17.1, minimum required is 2.18](#sast-git-version-2171-minimum-required-is-218)
+17. [No reaction after opening a test PR or posting a comment (no Actions run created)](#no-reaction-after-opening-a-test-pr-or-posting-a-comment-no-actions-run-created)
 
 ---
 
@@ -36,13 +40,44 @@ Reference this file from SKILL.md and other references instead of duplicating er
 
 ## Resource allocation / pending jobs
 
-**Error message:** Task stuck in "申请资源" (requesting resources) / pending state indefinitely.
+**Error message:**
+- Job stuck in "申请资源" (requesting resources) / pending indefinitely and never starts.
+- Resource allocation error returned at job start: "no available runner", label not matched,
+  or a resource-pool / quota error.
+- The run exists but one or more jobs never progress out of `PENDING`.
 
-**Cause:** `runs-on` label is wrong, or the resource pool has no available runners.
+**Cause — check three things in this order:**
+
+1. **`runs-on` label config is wrong or does not match any available runner pool.**
+   - Paid pool: `[ dedicate-hosted, <arch>, <size> ]`
+     (e.g. `[ dedicate-hosted, x64, large ]`, `[ dedicate-hosted, arm64, large ]`)
+   - Free pool: `[ 'codearts-hosted', 'ubuntu-latest', 'x64', 'large' ]`
+   - Arch labels must be spelled exactly: x86-64 / amd64 → `x64`, aarch64 → `arm64`.
+     Do NOT write `x86` or `amd64` — they will not match.
+   - Label order and spelling must match the pool's accepted labels exactly; a typo or an
+     extra/unknown label makes the scheduler unable to place the job.
+
+2. **The resource pool itself has a problem** — no online runners, quota exhausted, or the
+   pool is temporarily out of capacity. This is an environment issue, not a YAML bug.
+
+3. **The repository's organization is not whitelisted for the paid pool.**
+   - `dedicate-hosted` is a **paid** resource and enforces an **organization-level whitelist**.
+     Even with perfectly correct `runs-on` labels, if the repo's org is not on the whitelist,
+     the resource request hangs in "申请资源" or fails.
+   - `codearts-hosted` is the **free** resource and has **no whitelist restriction**. If a job
+     cannot get resources on `dedicate-hosted`, switching to `codearts-hosted` (x64) is a quick
+     way to tell a whitelist/quota problem apart from a YAML problem.
 
 **Fix:**
-- Verify `runs-on` labels match available runners: `dedicate-hosted`, `codearts-hosted`, `x64`, `arm64`, `large`, `npu`
-- Check resource pool quota and runner availability
+- First, verify the `runs-on` labels against the runner mapping table (SKILL.md "Runner mapping")
+  and the job's actual arch (`CP_runs_on` for unified-pool jobs).
+- If labels are correct, ask the user / org admin to check:
+  (a) the resource pool is online and has quota/capacity, and
+  (b) the repo's organization is on the `dedicate-hosted` whitelist.
+- As a discriminator, temporarily switch the job to `codearts-hosted` (x64). If it starts, the
+  YAML is fine and the problem is dedicated-hosted whitelist/quota → mark `needs_human`.
+- Do NOT keep retrying YAML edits for whitelist or quota issues — they are environment problems
+  the conversion cannot fix.
 
 ---
 
@@ -359,3 +394,156 @@ repository secrets.
 **How to verify during testing:** If you pushed a fix and the error message is identical to before,
 check whether you pushed the YAML to master or only to the PR branch — if the latter, the fix
 never took effect.
+
+---
+
+## Antipoison: No module named 'apig_sdk'
+
+**Error message:**
+```
+ModuleNotFoundError: No module named 'apig_sdk'
+```
+or:
+```
+ERROR: Could not find a version that satisfies the requirement apig-sdk
+ERROR: No matching distribution found for apig-sdk
+```
+
+**Cause:** `apig_sdk` is the Huawei Cloud API Gateway Python SDK. It is NOT published on PyPI —
+`pip install apig-sdk` or `pip install apig_sdk` will fail. The original CodeArts job downloads
+it as a zip from OBS: `wget https://.../ApiGateway-python-sdk-2.0.7.zip`.
+
+**Fix:** The `apig_sdk` package provides Huawei Cloud API Gateway AK/SK request signing.
+PyPI package `apig-sdk` exists but **Huawei Cloud containers often cannot access PyPI or GitHub**
+(network restrictions in the CI environment). The reliable approach is to **carry `apig_sdk/` in-repo**
+under `.gitcode/workflows/scripts/apig_sdk/` and add scripts/ to PYTHONPATH:
+
+1. During conversion, create `scripts/apig_sdk/__init__.py` and `scripts/apig_sdk/signer.py`
+   with a minimal signer implementation (Signer class + HttpRequest class).
+2. In the Antipoison step, set PYTHONPATH before running:
+```yaml
+- name: Antipoison
+  run: |
+    set -ex
+    pip3 install requests
+    export PYTHONPATH="${ATOMGIT_WORKSPACE}/.gitcode/workflows/scripts:${PYTHONPATH}"
+    python3 .gitcode/workflows/scripts/anti_poison.py ...
+```
+
+The signer.py module implements HMAC-SHA256 request signing per Huawei Cloud APIG spec.
+If the CI repo already contains an apig_sdk/ directory, carry that directly instead of
+creating a minimal version.
+
+---
+
+## pre-commit: Executable './gitleaks' not found
+
+**Error message:**
+```
+Executable `./gitleaks` not found
+[ERROR] pre-commit 检查失败
+- hook id: gitleaks-offline-scan
+- exit code: 1
+```
+
+**Cause:** The `openlibing-pre-commit-action` plugin runs pre-commit hooks that include a
+`gitleaks-offline-scan` hook. This hook expects a `./gitleaks` binary in the workspace root,
+but the base container image doesn't have it preinstalled.
+
+**Fix:** Add a gitleaks download step BEFORE the `openlibing-pre-commit-action` step:
+```yaml
+- name: gitleaks install
+  run: |
+    wget -q --no-check-certificate -O gitleaks https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz
+    tar -xzf gitleaks 2>/dev/null || wget -q --no-check-certificate -O gitleaks https://obs-community.obs.cn-north-1.myhuaweicloud.com/gitleaks/gitleaks-linux-amd64/latest/gitleaks
+    chmod +x gitleaks
+    ./gitleaks version
+```
+
+**Note:** If gitleaks finds pre-existing secrets in the repository (e.g., in README.md), that
+is a `needs_human` issue — the repo owners need to add `.gitleaks.toml` allowlist entries or
+fix the detected secrets. This is not a YAML conversion problem.
+
+---
+
+## SAST: git version 2.17.1, minimum required is 2.18
+
+**Error message:**
+```
+要求的最低git版本是 2.18, 当前git ('/usr/bin/git') 版本为 2.17.1
+```
+
+**Cause:** Some older SWR container images (like `swr.cn-north-4.myhuaweicloud.com/ascend-mindx/mindx_x86:*`)
+ship with git 2.17, which is below the `checkout` action's minimum of 2.18.
+
+**Fix:** Add a git upgrade step BEFORE `checkout`:
+```yaml
+- name: git upgrade
+  run: |
+    apt-get update
+    apt-get install -y software-properties-common
+    add-apt-repository ppa:git-core/ppa -y
+    apt-get update
+    apt-get install -y git
+    git --version
+- name: checkout
+  uses: checkout
+  with:
+    ref: ${{ atomgit.event.pull_request.merge_commit_sha || '' }}
+```
+
+See also FAQ #7 ("Git version too old for checkout") for the list of images that need this fix.
+
+---
+
+## No reaction after opening a test PR or posting a comment (no Actions run created)
+
+**Symptom:** You push a test PR (or post a `/compile`-style comment on a PR), then poll
+`GET .../actions/runs` — and **no new run appears at all**. The Actions tab shows nothing new.
+This is different from a run that starts and then fails: here the pipeline never triggers.
+
+**Cause — check in this order:**
+
+1. **The `on:` trigger block in the entry workflow is wrong or missing.** A run can only be
+   created if the event that just happened is actually declared as a trigger. The two common
+   cases:
+   - **PR events (open/update/reopen)** require `pull_request_target` (or `pull_request`):
+     ```yaml
+     on:
+       pull_request_target:
+         branches: [ master, main ]
+         types: [open, update, reopen, merge]
+     ```
+     A PR open/update produces no run if `pull_request_target`/`pull_request` is absent, or if
+     the target branch is not listed under `branches`.
+   - **PR comment events (e.g. `/compile`)** require `pull_request_comment` (NOT
+     `issue_comment`):
+     ```yaml
+     on:
+       pull_request_comment:
+         types: [created]
+         branches: [ '*' ]
+         comments: [ '^(?:\/)?compile*' ]
+     ```
+     A comment produces no run if `pull_request_comment` is missing, if the `comments` regex
+     does not match the comment text (e.g. `/compile` vs the configured pattern), or if the
+     wrong event name (`issue_comment`) was used.
+   - Also confirm the entry YAML lives at `.gitcode/workflows/` on the **default/target
+     branch** — `pull_request_target` reads YAML from the target branch (see FAQ #13), so a
+     workflow only pushed to the PR branch will not trigger.
+
+2. **The GitCode account is not on the Actions whitelist.** If the `on:` block is correct and
+   a run is still not created, the GitCode account that owns/pushed the PR (or the org the repo
+   belongs to) may not be whitelisted to run Actions. This is an environment/permission issue,
+   not a YAML bug.
+
+**Fix / diagnosis workflow:**
+- Inspect the entry workflow's `on:` block first. Match the event to the trigger:
+  PR open/update → `pull_request_target`/`pull_request`; PR comment → `pull_request_comment`.
+  Verify branch filters and (for comments) the `comments` regex.
+- Verify the workflow YAML is committed on the default/target branch, not only the PR branch.
+- If the trigger config is correct, ask the user to confirm the GitCode account / organization
+  has been added to the Actions whitelist. Mark `needs_human` — do not keep editing YAML.
+- To confirm it is a whitelist issue rather than a trigger issue, a correctly-configured
+  `workflow_dispatch` run that also never starts (on an account known to be non-whitelisted)
+  points to the whitelist rather than the event config.
